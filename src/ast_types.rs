@@ -4,6 +4,7 @@ use clang::token::TokenKind;
 /// to all fields from specific kinds of entities that we need and unlike clang::Entity objects,
 /// objects of these types aren't tied to the lifetime of the TU in any way
 use clang::Accessibility;
+use clang::EntityKind;
 use clang::EntityKind::*;
 use std::hash::Hash;
 
@@ -118,7 +119,7 @@ impl TypeDeclaration {
             .get_children()
             .iter()
             .filter_map(|c| {
-                if c.get_kind() != FieldDecl {
+                if !matches!(c.get_kind(), FieldDecl | VarDecl) {
                     return None;
                 }
                 Some(TypeField::new(c))
@@ -157,6 +158,7 @@ pub struct TypeField {
     pub accessibility: Accessibility,
     pub offset: Option<usize>,
     pub tokens: Vec<SimpleToken>,
+    pub is_static: bool,
 }
 
 impl TypeField {
@@ -187,6 +189,8 @@ impl TypeField {
                 // Convert number of bits from object start into decimal
                 .map(|o| o / 8),
             tokens,
+            // Non static field entities have type FieldDecl but static field entities have type VarDecl
+            is_static: field_entity.get_kind() == EntityKind::VarDecl,
         }
     }
 }

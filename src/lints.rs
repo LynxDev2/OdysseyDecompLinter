@@ -218,13 +218,35 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 continue;
             }
 
-            let field_name_no_m_prefix = field.name.strip_prefix("m").unwrap_or(&field.name);
-            let field_name_no_m_prefix_decapitalized =
-                utils::change_str_capitalization(field_name_no_m_prefix, false);
+            let field_name_no_kind_prefix = if field.is_static {
+                field.name.strip_prefix("s").unwrap_or(&field.name)
+            } else if !type_decl.is_struct {
+                field.name.strip_prefix("m").unwrap_or(&field.name)
+            } else {
+                &field.name
+            };
+            let field_name_no_kind_prefix_decapitalized =
+                utils::change_str_capitalization(field_name_no_kind_prefix, false);
 
             // Variable names should always be valid ascii, so indexing this byte array shouldn't
             // cause any problems
             let field_name_bytes = field.name.as_bytes();
+
+            if field.is_static {
+                if !field.name.starts_with("s")
+                    || field_name_bytes.len() < 2
+                    || !field_name_bytes[1].is_ascii_uppercase()
+                {
+                    print_fail_for_field(
+                        "Static fields of classes and structs should be prefixed with `s`",
+                    );
+                    add_field_name_fix(format!(
+                        "s{}",
+                        utils::change_str_capitalization(&field.name, true)
+                    ));
+                    continue;
+                }
+            }
 
             if type_decl.is_struct {
                 // Skip macro-generated Nerve structs
@@ -247,9 +269,9 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     print_fail_for_field(
                         "Member variables of structs should be formatted as noPrefixCamelCase",
                     );
-                    add_field_name_fix(field_name_no_m_prefix_decapitalized.clone());
+                    add_field_name_fix(field_name_no_kind_prefix_decapitalized.clone());
                 }
-            } else {
+            } else if !field.is_static {
                 if field.accessibility == Accessibility::Public {
                     print_fail_for_field("Class member variables should always be private or protected. Consider using a struct instead if public access is needed");
                     if state.auto_fix {
@@ -272,10 +294,12 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
             if field.type_name == "bool"
                 && !BOOL_ALLOWED_PREFIXES
                     .iter()
-                    .any(|p| field_name_no_m_prefix_decapitalized.starts_with(p))
+                    .any(|p| field_name_no_kind_prefix_decapitalized.starts_with(p))
             {
-                print_fail_for_field("Boolean member variables should be prefixed with (`m`) `is`, `has` or `always`");
-                let field_name_fix = if type_decl.is_struct {
+                print_fail_for_field("Boolean member variables should be prefixed with (`m`/`s`) `is`, `has` or `always`");
+                let field_name_fix = if field.is_static {
+                    format!("sIs{}", &field.name[1..])
+                } else if type_decl.is_struct {
                     format!("is{}", utils::change_str_capitalization(&field.name, true))
                 } else {
                     format!("mIs{}", &field.name[1..])
