@@ -6,9 +6,6 @@ use crate::{
     LinterSharedState,
 };
 
-const VISIBILITY_FIX_WARNING: &str =
-    "Warning: Visibility issues can't be automatically fixed, please fix them manually";
-
 pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
     decl_def_param_names_match(state);
     underscore_suffixed_functions_private(state);
@@ -31,7 +28,7 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
             "Function declaration should be made private since it ends with an underscore",
         );
         if state.auto_fix {
-            println!("{VISIBILITY_FIX_WARNING}");
+            utils::print_no_visibility_fix_warning();
         }
     }
 }
@@ -71,6 +68,8 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
             if state.auto_fix {
                 let mut replace_with = def_param.name;
                 if decl_param.name.is_empty() {
+                    // Add an extra whitespace for empty param names so that the new param name doesn't
+                    // become part of the param type
                     replace_with.insert(0, ' ');
                 }
                 let range_to_change = (
@@ -82,6 +81,7 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
                     .entry(declaration.file_path.clone())
                     .or_default()
                     .push(range_to_change);
+                utils::print_fix_success();
             }
         }
     }
@@ -148,13 +148,14 @@ fn check_namespace_usages(
             if auto_fix {
                 let fix = (
                     ident_token.offset_in_file
-                        ..ident_token.offset_in_file + ident_token.spelling.len() + 2,
+                        ..ident_token.offset_in_file + ident_token.spelling.len() + 2, // Add 2 for "::"
                     String::new(),
-                ); // Add 2 for "::"
+                );
                 changes_map
                     .entry(file_path.to_string())
                     .or_default()
                     .push(fix);
+                utils::print_fix_success();
             }
         }
     }
@@ -184,7 +185,11 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     .entry(type_decl.file_path.clone())
                     .or_default()
                     .push(fix_change);
-                println!("Warning: Changed name of field on line {} of file {}, this may cause errors when compiling", field.file_line, &type_decl.file_path);
+                utils::print_fix_success();
+                utils::print_possible_compiler_error_warning_for_line(
+                    &type_decl.file_path,
+                    field.file_line,
+                );
             };
 
             let offset_variable_offset_and_prefix = OFFSET_VARIABLE_PREFIXES
@@ -198,7 +203,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     add_field_name_fix(format!("{prefix}{}", field.name.to_lowercase()));
                     continue;
                 }
-                // libclang often fails to get the offset of fields in many cases where the C++ offsetof would probably work (sometimes due to inheritance, sometimes due to non pointer non basic types, etc.), which is why this often won't report all incorect offset variables, but it's better than nothing
+                // libclang often fails to get the offset of fields even in cases where the C++ offsetof would probably work (sometimes due to inheritance, sometimes due to non pointer non basic types, etc.), which is why this often won't report all incorect offset variables, but it's better than nothing
                 if let Some(actual_offset) = field.offset {
                     if offset != format!("{actual_offset:x}") {
                         print_fail_for_field(&format!(
@@ -237,7 +242,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 if field.accessibility != Accessibility::Public {
                     print_fail_for_field("Struct member variables should always be public");
                     if state.auto_fix {
-                        println!("{VISIBILITY_FIX_WARNING}");
+                        utils::print_no_visibility_fix_warning();
                     }
                 }
 
@@ -253,7 +258,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 if field.accessibility == Accessibility::Public {
                     print_fail_for_field("Class member variables should always be private or protected. Consider using a struct instead if public access is needed");
                     if state.auto_fix {
-                        println!("{VISIBILITY_FIX_WARNING}");
+                        utils::print_no_visibility_fix_warning();
                     }
                 }
 

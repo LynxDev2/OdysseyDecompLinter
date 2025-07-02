@@ -1,8 +1,8 @@
-use clang::token::TokenKind;
-/// This file contains types that represent AST entities. All types in this file are constructed
-/// from clang::Entity objects. The main advantages of these types are that they give easy access
-/// to all fields from specific kinds of entities that we need and unlike clang::Entity objects,
+/// This file contains types that represent AST entities and tokens. All types in this file are constructed
+/// from clang objects. The main advantages of these types are that they give easy access
+/// to all fields from specific kinds of entities that we need and unlike clang objects,
 /// objects of these types aren't tied to the lifetime of the TU in any way
+use clang::token::TokenKind;
 use clang::Accessibility;
 use clang::EntityKind::*;
 use std::hash::Hash;
@@ -35,7 +35,7 @@ impl FunctionInfo {
             .get_file_location();
         let file_path = loc
             .file
-            .expect("Function entity locations should always have a valid file name")
+            .expect("Function entity locations should always have a valid file object")
             .get_path()
             .to_str()
             .expect("Function entity location file paths should always be valid as strs")
@@ -51,7 +51,7 @@ impl FunctionInfo {
             .expect("Function entities should always have a name");
         let range = function_entity
             .get_range()
-            .expect("Function entites should always a valid source range");
+            .expect("Function entites should always have a valid source range");
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         FunctionInfo {
             name,
@@ -81,7 +81,7 @@ impl FunctionParam {
             name: param_entity.get_name().unwrap_or_default(),
             offset_in_file: param_entity
                 .get_location()
-                .expect("Param entities should always have a location")
+                .expect("Param entities should always have a valid location")
                 .get_file_location()
                 .offset as usize,
         }
@@ -134,6 +134,7 @@ impl TypeDeclaration {
     }
 }
 
+// These three traits are implemented to allow for HashSets of this type
 impl PartialEq for TypeDeclaration {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
@@ -164,7 +165,7 @@ impl TypeField {
         let name = field_entity.get_name().unwrap_or_default();
         let loc = field_entity
             .get_location()
-            .expect("Type field entities should always have a location")
+            .expect("Type field entities should always have a valid location")
             .get_file_location();
         let range = field_entity
             .get_range()
@@ -184,7 +185,7 @@ impl TypeField {
             offset: field_entity
                 .get_offset_of_field()
                 .ok()
-                // Convert number of bits from object start into decimal
+                // Convert number of bits from type start into decimal
                 .map(|o| o / 8),
             tokens,
         }

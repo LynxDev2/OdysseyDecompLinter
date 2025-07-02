@@ -1,6 +1,7 @@
 use crate::ast_types::{FunctionInfo, TypeDeclaration};
 use anyhow::Result;
 use clang::Index;
+use colorize::AnsiColor;
 use std::{
     collections::{HashMap, HashSet},
     fs::{read_dir, OpenOptions},
@@ -143,13 +144,6 @@ pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Res
     Ok(())
 }
 
-pub fn print_lint_fail_for_location(path: &str, line: u32, warning: &str) {
-    println!(
-        "File {} line {line}: {warning}",
-        make_path_relative_from_cwd(path),
-    );
-}
-
 fn make_path_relative_from_cwd(path: &str) -> String {
     let mut path_owned = path.to_string();
     path_owned = path_owned
@@ -179,4 +173,35 @@ pub fn cwd_string() -> String {
     cwd.to_str()
         .expect("Current work dir should always be valid as a &str")
         .to_string()
+}
+
+pub fn print_no_visibility_fix_warning() {
+    println!(
+        "{} {}",
+        "Warning:".bold().red(),
+        "Visibility issues can't be automatically fixed, please fix them manually".red()
+    );
+}
+
+pub fn print_lint_fail_for_location(path: &str, line: u32, warning: &str) {
+    println!(
+        "{}",
+        &format!("{}:{line}: {warning}", make_path_relative_from_cwd(path)).b_yellow()
+    );
+}
+
+pub fn print_possible_compiler_error_warning_for_line(path: &str, line: u32) {
+    println!(
+        "{} {}",
+        "Warning:".bold().b_red(),
+        &format!(
+            "{}:{line}: Field name changed, this may cause errors when compiling",
+            make_path_relative_from_cwd(path)
+        )
+        .b_red()
+    );
+}
+
+pub fn print_fix_success() {
+    println!("{}", "Fixed".b_green());
 }
