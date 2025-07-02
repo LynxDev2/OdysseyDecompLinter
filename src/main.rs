@@ -76,8 +76,7 @@ fn main() -> Result<()> {
 
     let mut shared_state = LinterSharedState::new(declarations, definitions, types, args.fix);
 
-    lints::lint_functions(&mut shared_state);
-    lints::lint_type_definitions(&mut shared_state);
+    lints::lint_functions_and_type_declarations(&mut shared_state);
 
     if args.fix {
         utils::write_changes_to_files(shared_state.fixes)

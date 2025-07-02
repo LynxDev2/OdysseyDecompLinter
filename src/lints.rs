@@ -1,17 +1,21 @@
-use clang::Accessibility;
+use clang::{token::TokenKind, Accessibility};
 
-use crate::{utils, LinterSharedState};
+use crate::{
+    ast_types::SimpleToken,
+    utils::{self, FilePathToChangesMap},
+    LinterSharedState,
+};
 
 const VISIBILITY_FIX_WARNING: &str =
     "Warning: Visibility issues can't be automatically fixed, please fix them manually";
 
-pub fn lint_functions(state: &mut LinterSharedState) {
+pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
     decl_def_param_names_match(state);
     underscore_suffixed_functions_private(state);
-}
 
-pub fn lint_type_definitions(state: &mut LinterSharedState) {
     type_declaration_field_naming(state);
+
+    no_unnecessary_namespace_usages(state);
 }
 
 fn underscore_suffixed_functions_private(state: &LinterSharedState) {
@@ -34,12 +38,9 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
 
 fn decl_def_param_names_match(state: &mut LinterSharedState) {
     for (symbol, definition) in state.definitions.iter() {
-        let declaration = state.declarations.get(&symbol.clone());
-        if declaration.is_none() {
+        let Some(declaration) = state.declarations.get(&symbol.clone()) else {
             continue;
-        }
-
-        let declaration = declaration.unwrap();
+        };
 
         let decl_params = declaration.params.clone().into_iter();
         let def_params = definition.params.clone().into_iter();
@@ -81,6 +82,79 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
                     .entry(declaration.file_path.clone())
                     .or_default()
                     .push(range_to_change);
+            }
+        }
+    }
+}
+
+fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
+    for f in state.definitions.values() {
+        for ident_token in f.tokens.iter().filter(|t| t.kind == TokenKind::Identifier) {
+            check_namespace_usages(
+                ident_token,
+                &f.namespace,
+                &f.file_path,
+                &mut state.fixes,
+                state.auto_fix,
+            );
+        }
+    }
+
+    for f in state.declarations.values() {
+        for ident_token in f.tokens.iter().filter(|t| t.kind == TokenKind::Identifier) {
+            check_namespace_usages(
+                ident_token,
+                &f.namespace,
+                &f.file_path,
+                &mut state.fixes,
+                state.auto_fix,
+            );
+        }
+    }
+
+    for t in state.types.iter() {
+        for field in t.fields.iter() {
+            for ident_token in field
+                .tokens
+                .iter()
+                .filter(|t| t.kind == TokenKind::Identifier)
+            {
+                check_namespace_usages(
+                    ident_token,
+                    &t.namespace,
+                    &t.file_path,
+                    &mut state.fixes,
+                    state.auto_fix,
+                );
+            }
+        }
+    }
+}
+
+fn check_namespace_usages(
+    ident_token: &SimpleToken,
+    namespace: &[String],
+    file_path: &str,
+    changes_map: &mut FilePathToChangesMap,
+    auto_fix: bool,
+) {
+    for nested_namespace in namespace {
+        if ident_token.spelling == *nested_namespace {
+            utils::print_lint_fail_for_location(
+                file_path,
+                ident_token.file_line,
+                &format!("{}:: should be omitted here", ident_token.spelling),
+            );
+            if auto_fix {
+                let fix = (
+                    ident_token.offset_in_file
+                        ..ident_token.offset_in_file + ident_token.spelling.len() + 2,
+                    String::new(),
+                ); // Add 2 for "::"
+                changes_map
+                    .entry(file_path.to_string())
+                    .or_default()
+                    .push(fix);
             }
         }
     }

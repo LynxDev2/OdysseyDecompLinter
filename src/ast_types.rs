@@ -1,3 +1,4 @@
+use clang::token::TokenKind;
 /// This file contains types that represent AST entities. All types in this file are constructed
 /// from clang::Entity objects. The main advantages of these types are that they give easy access
 /// to all fields from specific kinds of entities that we need and unlike clang::Entity objects,
@@ -14,10 +15,12 @@ pub struct FunctionInfo {
     pub file_line: u32,
     pub params: Vec<FunctionParam>,
     pub accessability: Accessibility,
+    pub tokens: Vec<SimpleToken>,
+    pub namespace: Vec<String>,
 }
 
 impl FunctionInfo {
-    pub fn new(function_entity: &clang::Entity) -> FunctionInfo {
+    pub fn new(function_entity: &clang::Entity, namespace: Vec<String>) -> FunctionInfo {
         assert!(
             matches!(
                 function_entity.get_kind(),
@@ -40,12 +43,16 @@ impl FunctionInfo {
         let params: Vec<_> = function_entity
             .get_arguments()
             .unwrap_or_default()
-            .into_iter()
-            .map(|a| FunctionParam::new(&a))
+            .iter()
+            .map(FunctionParam::new)
             .collect();
         let name = function_entity
             .get_name()
             .expect("Function entities should always have a name");
+        let range = function_entity
+            .get_range()
+            .expect("Function entites should always a valid source range");
+        let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         FunctionInfo {
             name,
             is_declaration,
@@ -55,6 +62,8 @@ impl FunctionInfo {
             accessability: function_entity
                 .get_accessibility()
                 .unwrap_or(Accessibility::Private),
+            tokens,
+            namespace,
         }
     }
 }
@@ -85,10 +94,11 @@ pub struct TypeDeclaration {
     pub is_struct: bool,
     pub file_path: String,
     pub fields: Vec<TypeField>,
+    pub namespace: Vec<String>,
 }
 
 impl TypeDeclaration {
-    pub fn new(type_decl_entity: &clang::Entity) -> TypeDeclaration {
+    pub fn new(type_decl_entity: &clang::Entity, namespace: Vec<String>) -> TypeDeclaration {
         assert!(
             matches!(type_decl_entity.get_kind(), StructDecl | ClassDecl),
             "Type declaration entity should be of type StructDecl or ClassDecl"
@@ -119,6 +129,7 @@ impl TypeDeclaration {
             is_struct: type_decl_entity.get_kind() == StructDecl,
             file_path,
             fields,
+            namespace,
         }
     }
 }
@@ -145,35 +156,57 @@ pub struct TypeField {
     pub file_line: u32,
     pub accessibility: Accessibility,
     pub offset: Option<usize>,
+    pub tokens: Vec<SimpleToken>,
 }
 
 impl TypeField {
     pub fn new(field_entity: &clang::Entity) -> TypeField {
         let name = field_entity.get_name().unwrap_or_default();
+        let loc = field_entity
+            .get_location()
+            .expect("Type field entities should always have a location")
+            .get_file_location();
+        let range = field_entity
+            .get_range()
+            .expect("Type field entites should always a valid source range");
+        let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         TypeField {
             name,
             type_name: field_entity
                 .get_type()
                 .expect("Type field entites should always have a valid internal type field")
                 .get_display_name(),
-            offset_in_file: field_entity
-                .get_location()
-                .expect("Type field entities should always have a location")
-                .get_file_location()
-                .offset as usize,
+            offset_in_file: loc.offset as usize,
             accessibility: field_entity
                 .get_accessibility()
                 .unwrap_or(Accessibility::Private),
-            file_line: field_entity
-                .get_location()
-                .expect("Param entities should always have a location")
-                .get_file_location()
-                .line,
+            file_line: loc.line,
             offset: field_entity
                 .get_offset_of_field()
                 .ok()
                 // Convert number of bits from object start into decimal
                 .map(|o| o / 8),
+            tokens,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SimpleToken {
+    pub kind: TokenKind,
+    pub spelling: String,
+    pub offset_in_file: usize,
+    pub file_line: u32,
+}
+
+impl SimpleToken {
+    pub fn new(clang_token: &clang::token::Token) -> SimpleToken {
+        let loc = clang_token.get_location().get_file_location();
+        SimpleToken {
+            kind: clang_token.get_kind(),
+            spelling: clang_token.get_spelling(),
+            offset_in_file: loc.offset as usize,
+            file_line: loc.line,
         }
     }
 }

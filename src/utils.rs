@@ -1,6 +1,6 @@
 use crate::ast_types::{FunctionInfo, TypeDeclaration};
 use anyhow::Result;
-use clang::{EntityVisitResult, Index};
+use clang::Index;
 use std::{
     collections::{HashMap, HashSet},
     fs::{read_dir, OpenOptions},
@@ -11,28 +11,49 @@ use std::{
 pub fn find_functions_and_types_in_tu(
     tu_ast: clang::Entity,
 ) -> (Vec<(String, FunctionInfo)>, Vec<TypeDeclaration>) {
-    use clang::EntityKind::*;
-    let mut functions: Vec<(String, FunctionInfo)> = Vec::with_capacity(200);
-    let mut type_decls: Vec<TypeDeclaration> = Vec::with_capacity(50);
-    tu_ast.visit_children(|child: clang::Entity, _| {
-        match child.get_kind() {
-            FunctionDecl | Method | Constructor => {
-                let mangled_name = child.get_mangled_name();
-                if let Some(mangled_name) = mangled_name {
-                    functions.push((mangled_name, FunctionInfo::new(&child)));
-                }
-            }
-            StructDecl | ClassDecl => {
-                // Skip forward-declarations
-                if !child.get_children().is_empty() {
-                    type_decls.push(TypeDeclaration::new(&child));
-                }
-            }
-            _ => {}
-        }
-        EntityVisitResult::Recurse
-    });
+    let mut functions = Vec::with_capacity(200);
+    let mut type_decls = Vec::with_capacity(50);
+    let mut namespace = Vec::new();
+    get_functions_and_types_with_namespace(tu_ast, &mut functions, &mut type_decls, &mut namespace);
     (functions, type_decls)
+}
+
+fn get_functions_and_types_with_namespace(
+    entity: clang::Entity,
+    functions: &mut Vec<(String, FunctionInfo)>,
+    type_decls: &mut Vec<TypeDeclaration>,
+    namespace: &mut Vec<String>,
+) {
+    use clang::EntityKind::*;
+    match entity.get_kind() {
+        Namespace => {
+            if let Some(name) = entity.get_name() {
+                namespace.push(name.clone());
+                for child in entity.get_children() {
+                    get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
+                }
+                namespace.pop(); // exit namespace
+            }
+        }
+        FunctionDecl | Method | Constructor => {
+            if let Some(mangled) = entity.get_mangled_name() {
+                functions.push((mangled, FunctionInfo::new(&entity, namespace.clone())));
+            }
+        }
+        StructDecl | ClassDecl => {
+            if !entity.get_children().is_empty() {
+                type_decls.push(TypeDeclaration::new(&entity, namespace.clone()));
+                for child in entity.get_children() {
+                    get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
+                }
+            }
+        }
+        _ => {
+            for child in entity.get_children() {
+                get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
+            }
+        }
+    }
 }
 
 fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
