@@ -30,7 +30,7 @@ struct Args {
     all: bool,
 }
 
-struct LinterSharedState {
+pub struct LinterSharedState {
     pub definitions: SymbolToFunctionInfoMap,
     pub declarations: SymbolToFunctionInfoMap,
     pub types: HashSet<TypeDeclaration>,
