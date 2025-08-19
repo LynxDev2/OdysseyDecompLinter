@@ -16,12 +16,12 @@ pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
 }
 
 fn underscore_suffixed_functions_private(state: &LinterSharedState) {
-    let incorrect_accessability_decls: Vec<_> = state
+    let incorrect_accessibility_decls: Vec<_> = state
         .declarations
         .values()
-        .filter(|d| d.name.ends_with("_") && d.accessability != Accessibility::Private)
+        .filter(|d| d.name.ends_with("_") && d.accessibility != Accessibility::Private)
         .collect();
-    for decl in incorrect_accessability_decls {
+    for decl in incorrect_accessibility_decls {
         utils::print_lint_fail_for_location(
             &decl.file_path,
             decl.file_line,
@@ -34,7 +34,7 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
 }
 
 fn decl_def_param_names_match(state: &mut LinterSharedState) {
-    for (symbol, definition) in state.definitions.iter() {
+    for (symbol, definition) in &state.definitions {
         let Some(declaration) = state.declarations.get(&symbol.clone()) else {
             continue;
         };
@@ -112,8 +112,8 @@ fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
         }
     }
 
-    for t in state.types.iter() {
-        for field in t.fields.iter() {
+    for t in &state.types {
+        for field in &t.fields {
             for ident_token in field
                 .tokens
                 .iter()
@@ -166,8 +166,8 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
         ["pad_", "padding_", "field_", "unk_", "gap_", "filler_", "_"];
     const MISC_ALLOWED_PREFIXES: [&str; 5] = ["pad", "unk", "gap", "filler", "unused"];
     const BOOL_ALLOWED_PREFIXES: [&str; 4] = ["is", "has", "should", "always"];
-    for type_decl in state.types.iter() {
-        for field in type_decl.fields.iter() {
+    for type_decl in &state.types {
+        for field in &type_decl.fields {
             // Field specific utility closures
             let print_fail_for_field = |warning: &str| {
                 utils::print_lint_fail_for_location(&type_decl.file_path, field.file_line, warning)
@@ -204,7 +204,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     continue;
                 }
                 // libclang often fails to get the offset of fields even in cases where the C++ offsetof would probably work (sometimes due to inheritance, sometimes due to non pointer non basic types, etc.), which is why this often won't report all incorect offset variables, but it's better than nothing
-                if let Some(actual_offset) = field.offset {
+                if let Some(actual_offset) = field.offset_in_type {
                     if offset != format!("{actual_offset:x}") {
                         print_fail_for_field(&format!(
                             "Offset {offset} does not match actual offset for {}: {actual_offset:x}",

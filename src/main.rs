@@ -80,7 +80,7 @@ fn main() -> Result<()> {
 
     if args.fix {
         utils::write_changes_to_files(shared_state.fixes)
-            .context("Failed to write fixes to suorce files")?;
+            .context("Failed to write fixes to source files")?;
     }
 
     Ok(())

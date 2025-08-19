@@ -11,7 +11,7 @@ use std::{
 
 pub fn find_functions_and_types_in_tu(
     tu_ast: clang::Entity,
-) -> (Vec<(String, FunctionInfo)>, Vec<TypeDeclaration>) {
+) -> (Vec<(String, FunctionInfo, bool)>, Vec<TypeDeclaration>) {
     let mut functions = Vec::with_capacity(200);
     let mut type_decls = Vec::with_capacity(50);
     let mut namespace = Vec::new();
@@ -21,7 +21,7 @@ pub fn find_functions_and_types_in_tu(
 
 fn get_functions_and_types_with_namespace(
     entity: clang::Entity,
-    functions: &mut Vec<(String, FunctionInfo)>,
+    functions: &mut Vec<(String, FunctionInfo, bool)>,
     type_decls: &mut Vec<TypeDeclaration>,
     namespace: &mut Vec<String>,
 ) {
@@ -38,7 +38,11 @@ fn get_functions_and_types_with_namespace(
         }
         FunctionDecl | Method | Constructor => {
             if let Some(mangled) = entity.get_mangled_name() {
-                functions.push((mangled, FunctionInfo::new(&entity, namespace.clone())));
+                functions.push((
+                    mangled,
+                    FunctionInfo::new(&entity, namespace.clone()),
+                    !entity.is_definition(),
+                ));
             }
         }
         StructDecl | ClassDecl => {
@@ -102,8 +106,8 @@ pub fn get_project_function_and_types(
         for file in get_cpp_files_recursive(dir)? {
             let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
             let (functions, types) = find_functions_and_types_in_tu(tu.get_entity());
-            for (mangled_name, function) in functions {
-                if function.is_declaration {
+            for (mangled_name, function, is_declaration) in functions {
+                if is_declaration {
                     decl_map.insert(mangled_name, function);
                 } else {
                     def_map.insert(mangled_name, function);

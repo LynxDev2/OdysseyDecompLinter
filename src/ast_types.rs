@@ -10,11 +10,10 @@ use std::hash::Hash;
 #[derive(Clone, Debug)]
 pub struct FunctionInfo {
     pub name: String,
-    pub is_declaration: bool,
     pub file_path: String,
     pub file_line: u32,
     pub params: Vec<FunctionParam>,
-    pub accessability: Accessibility,
+    pub accessibility: Accessibility,
     pub tokens: Vec<SimpleToken>,
     pub namespace: Vec<String>,
 }
@@ -28,7 +27,6 @@ impl FunctionInfo {
             ),
             "Function entity should be of type FunctionDecl, Method or Constructor"
         );
-        let is_declaration = !function_entity.is_definition();
         let loc = function_entity
             .get_location()
             .expect("Function entities should always have a valid location")
@@ -52,16 +50,16 @@ impl FunctionInfo {
         let range = function_entity
             .get_range()
             .expect("Function entites should always have a valid source range");
+        let accessibility = function_entity
+            .get_accessibility()
+            .unwrap_or(Accessibility::Public);
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         FunctionInfo {
             name,
-            is_declaration,
             file_path,
             file_line: loc.line,
             params,
-            accessability: function_entity
-                .get_accessibility()
-                .unwrap_or(Accessibility::Private),
+            accessibility,
             tokens,
             namespace,
         }
@@ -72,7 +70,7 @@ impl FunctionInfo {
 pub struct FunctionParam {
     pub name: String,
     pub offset_in_file: usize,
-    // TODO: Store default value
+    // TODO: Store default value for OdysseyDecomp#495
 }
 
 impl FunctionParam {
@@ -91,7 +89,7 @@ impl FunctionParam {
 #[derive(Clone, Debug)]
 pub struct TypeDeclaration {
     pub name: String,
-    pub is_struct: bool,
+    pub is_struct: bool, // true = struct, false = class
     pub file_path: String,
     pub fields: Vec<TypeField>,
     pub namespace: Vec<String>,
@@ -103,6 +101,9 @@ impl TypeDeclaration {
             matches!(type_decl_entity.get_kind(), StructDecl | ClassDecl),
             "Type declaration entity should be of type StructDecl or ClassDecl"
         );
+        let name = type_decl_entity
+            .get_name()
+            .expect("Type declaration entities should always have a valid name");
         let loc = type_decl_entity
             .get_location()
             .expect("Type declaration entities should always have a valid location")
@@ -117,15 +118,11 @@ impl TypeDeclaration {
         let fields: Vec<_> = type_decl_entity
             .get_children()
             .iter()
-            .filter_map(|c| {
-                if c.get_kind() != FieldDecl {
-                    return None;
-                }
-                Some(TypeField::new(c))
-            })
+            .filter(|c| c.get_kind() == FieldDecl)
+            .map(TypeField::new)
             .collect();
         TypeDeclaration {
-            name: type_decl_entity.get_name().unwrap_or_default(),
+            name,
             is_struct: type_decl_entity.get_kind() == StructDecl,
             file_path,
             fields,
@@ -156,13 +153,15 @@ pub struct TypeField {
     pub offset_in_file: usize,
     pub file_line: u32,
     pub accessibility: Accessibility,
-    pub offset: Option<usize>,
+    pub offset_in_type: Option<usize>,
     pub tokens: Vec<SimpleToken>,
 }
 
 impl TypeField {
     pub fn new(field_entity: &clang::Entity) -> TypeField {
-        let name = field_entity.get_name().unwrap_or_default();
+        let name = field_entity
+            .get_name()
+            .expect("Type field entities should always have a valid name");
         let loc = field_entity
             .get_location()
             .expect("Type field entities should always have a valid location")
@@ -180,9 +179,9 @@ impl TypeField {
             offset_in_file: loc.offset as usize,
             accessibility: field_entity
                 .get_accessibility()
-                .unwrap_or(Accessibility::Private),
+                .expect("Type field entites should always have a valid accessibility field"),
             file_line: loc.line,
-            offset: field_entity
+            offset_in_type: field_entity
                 .get_offset_of_field()
                 .ok()
                 // Convert number of bits from type start into decimal
