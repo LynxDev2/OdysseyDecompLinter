@@ -1,9 +1,8 @@
 use clang::{token::TokenKind, Accessibility};
 
 use crate::{
-    ast_types::SimpleToken,
-    utils::{self, FilePathToChangesMap},
-    LinterSharedState,
+    types::{FilePathToChangesMap, LinterSharedState, SimpleToken},
+    utils,
 };
 
 pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
@@ -11,6 +10,7 @@ pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
     underscore_suffixed_functions_private(state);
 
     type_declaration_field_naming(state);
+    type_declaration_field_accessibility(state);
 
     no_unnecessary_namespace_usages(state);
 }
@@ -25,7 +25,7 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
         utils::print_lint_fail_for_location(
             &decl.file_path,
             decl.file_line,
-            "Function declaration should be made private since it ends with an underscore",
+            "Function declaration should be made private since it ends with an underscore, or underscore should be removed from function name",
         );
         if state.auto_fix {
             utils::print_no_visibility_fix_warning();
@@ -35,14 +35,11 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
 
 fn decl_def_param_names_match(state: &mut LinterSharedState) {
     for (symbol, definition) in &state.definitions {
-        let Some(declaration) = state.declarations.get(&symbol.clone()) else {
+        let Some(declaration) = state.declarations.get(symbol.as_str()) else {
             continue;
         };
 
-        let decl_params = declaration.params.clone().into_iter();
-        let def_params = definition.params.clone().into_iter();
-
-        for (decl_param, def_param) in decl_params.zip(def_params) {
+        for (decl_param, def_param) in declaration.params.iter().zip(&definition.params) {
             if decl_param.name == def_param.name {
                 continue;
             }
@@ -66,7 +63,7 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
                 );
             }
             if state.auto_fix {
-                let mut replace_with = def_param.name;
+                let mut replace_with = def_param.name.clone();
                 if decl_param.name.is_empty() {
                     // Add an extra whitespace for empty param names so that the new param name doesn't
                     // become part of the param type
@@ -89,57 +86,57 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
 
 fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
     for f in state.definitions.values() {
-        for ident_token in f.tokens.iter().filter(|t| t.kind == TokenKind::Identifier) {
-            check_namespace_usages(
-                ident_token,
-                &f.namespace,
-                &f.file_path,
-                &mut state.fixes,
-                state.auto_fix,
-            );
-        }
+        check_namespace_usages(
+            &f.tokens,
+            &f.namespace,
+            &f.file_path,
+            &mut state.fixes,
+            state.auto_fix,
+        );
     }
 
     for f in state.declarations.values() {
-        for ident_token in f.tokens.iter().filter(|t| t.kind == TokenKind::Identifier) {
-            check_namespace_usages(
-                ident_token,
-                &f.namespace,
-                &f.file_path,
-                &mut state.fixes,
-                state.auto_fix,
-            );
-        }
+        check_namespace_usages(
+            &f.tokens,
+            &f.namespace,
+            &f.file_path,
+            &mut state.fixes,
+            state.auto_fix,
+        );
     }
 
     for t in &state.types {
         for field in &t.fields {
-            for ident_token in field
-                .tokens
-                .iter()
-                .filter(|t| t.kind == TokenKind::Identifier)
-            {
-                check_namespace_usages(
-                    ident_token,
-                    &t.namespace,
-                    &t.file_path,
-                    &mut state.fixes,
-                    state.auto_fix,
-                );
-            }
+            check_namespace_usages(
+                &field.tokens,
+                &t.namespace,
+                &t.file_path,
+                &mut state.fixes,
+                state.auto_fix,
+            );
         }
     }
 }
 
 fn check_namespace_usages(
-    ident_token: &SimpleToken,
+    tokens: &[SimpleToken],
     namespace: &[String],
     file_path: &str,
     changes_map: &mut FilePathToChangesMap,
     auto_fix: bool,
 ) {
-    for nested_namespace in namespace {
-        if ident_token.spelling == *nested_namespace {
+    for (original_i, ident_token) in tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.kind == TokenKind::Identifier)
+    {
+        // Check whether or not the current token is a usage of a namespace the code currently being
+        // checked is inside of
+        if namespace.contains(&ident_token.spelling)
+            && tokens
+                .get(original_i + 1)
+                .is_some_and(|t| t.kind == TokenKind::Punctuation && t.spelling == "::")
+        {
             utils::print_lint_fail_for_location(
                 file_path,
                 ident_token.file_line,
@@ -169,10 +166,9 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
     for type_decl in &state.types {
         for field in &type_decl.fields {
             // Field specific utility closures
-            let print_fail_for_field = |warning: &str| {
-                utils::print_lint_fail_for_location(&type_decl.file_path, field.file_line, warning)
-            };
-            let mut add_field_name_fix = |fix: String| {
+            let mut print_fail_for_field_and_add_fix = |warning: &str, fix: String| {
+                utils::print_lint_fail_for_location(&type_decl.file_path, field.file_line, warning);
+
                 if !state.auto_fix {
                     return;
                 }
@@ -192,25 +188,27 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 );
             };
 
-            let offset_variable_offset_and_prefix = OFFSET_VARIABLE_PREFIXES
+            if let Some(prefix) = OFFSET_VARIABLE_PREFIXES
                 .iter()
-                .filter_map(|p| Some((field.name.strip_prefix(p)?.to_string(), p)))
-                .next();
-
-            if let Some((offset, prefix)) = offset_variable_offset_and_prefix {
+                .find(|&p| field.name.starts_with(p))
+            {
+                let offset = &field.name[prefix.len()..];
                 if offset.bytes().any(|b| b.is_ascii_uppercase()) {
-                    print_fail_for_field("Offset variables should be lowercase");
-                    add_field_name_fix(format!("{prefix}{}", field.name.to_lowercase()));
+                    print_fail_for_field_and_add_fix(
+                        "Offset variables should be all lowercase",
+                        format!("{prefix}{}", field.name.to_lowercase()),
+                    );
                     continue;
                 }
-                // libclang often fails to get the offset of fields even in cases where the C++ offsetof would probably work (sometimes due to inheritance, sometimes due to non pointer non basic types, etc.), which is why this often won't report all incorect offset variables, but it's better than nothing
+                // libclang often fails to get the offset of fields even in cases where the C++ offsetof would probably work
+                // (sometimes due to inheritance, sometimes due to non pointer non basic types, etc.),
+                // which is why this often won't report all incorect offset variables, but it's better than nothing
                 if let Some(actual_offset) = field.offset_in_type {
                     if offset != format!("{actual_offset:x}") {
-                        print_fail_for_field(&format!(
+                        print_fail_for_field_and_add_fix(&format!(
                             "Offset {offset} does not match actual offset for {}: {actual_offset:x}",
                             field.name
-                        ));
-                        add_field_name_fix(format!("{prefix}{actual_offset:x}"));
+                        ), format!("{prefix}{actual_offset:x}"));
                     }
                 }
                 continue;
@@ -239,53 +237,62 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     continue;
                 }
 
-                if field.accessibility != Accessibility::Public {
-                    print_fail_for_field("Struct member variables should always be public");
-                    if state.auto_fix {
-                        utils::print_no_visibility_fix_warning();
-                    }
-                }
-
                 if field_name_bytes[0].is_ascii_uppercase()
                     || (field.name.starts_with("m") && field_name_bytes[1].is_ascii_uppercase())
                 {
-                    print_fail_for_field(
+                    print_fail_for_field_and_add_fix(
                         "Member variables of structs should be formatted as noPrefixCamelCase",
+                        field_name_no_m_prefix_decapitalized.clone(),
                     );
-                    add_field_name_fix(field_name_no_m_prefix_decapitalized.clone());
                 }
-            } else {
-                if field.accessibility == Accessibility::Public {
-                    print_fail_for_field("Class member variables should always be private or protected. Consider using a struct instead if public access is needed");
-                    if state.auto_fix {
-                        utils::print_no_visibility_fix_warning();
-                    }
-                }
-
-                if !field.name.starts_with("m")
-                    || field_name_bytes.len() < 2
-                    || !field_name_bytes[1].is_ascii_uppercase()
-                {
-                    print_fail_for_field("Member variables of classes should be prefixed with `m`");
-                    add_field_name_fix(format!(
-                        "m{}",
-                        utils::change_str_capitalization(&field.name, true)
-                    ));
-                    continue;
-                }
+            } else if !field.name.starts_with("m")
+                || field_name_bytes.len() < 2
+                || !field_name_bytes[1].is_ascii_uppercase()
+            {
+                print_fail_for_field_and_add_fix(
+                    "Member variables of classes should be prefixed with `m`",
+                    format!("m{}", utils::change_str_capitalization(&field.name, true)),
+                );
+                continue;
             }
             if field.type_name == "bool"
                 && !BOOL_ALLOWED_PREFIXES
                     .iter()
                     .any(|p| field_name_no_m_prefix_decapitalized.starts_with(p))
             {
-                print_fail_for_field("Boolean member variables should be prefixed with (`m`) `is`, `has` or `always`");
                 let field_name_fix = if type_decl.is_struct {
                     format!("is{}", utils::change_str_capitalization(&field.name, true))
                 } else {
                     format!("mIs{}", &field.name[1..])
                 };
-                add_field_name_fix(field_name_fix);
+                print_fail_for_field_and_add_fix("Boolean member variables should be prefixed with (`m`) `is`, `has` or `always`", field_name_fix);
+            }
+        }
+    }
+}
+
+fn type_declaration_field_accessibility(state: &mut LinterSharedState) {
+    for type_decl in &state.types {
+        for field in &type_decl.fields {
+            if type_decl.is_struct {
+                if field.accessibility != Accessibility::Public {
+                    utils::print_lint_fail_for_location(
+                        &type_decl.file_path,
+                        field.file_line,
+                        "Struct member variables should always be public",
+                    );
+                    if state.auto_fix {
+                        utils::print_no_visibility_fix_warning();
+                    }
+                }
+            } else if field.accessibility == Accessibility::Public {
+                utils::print_lint_fail_for_location(
+                        &type_decl.file_path,
+                        field.file_line,
+                    "Class member variables should always be private or protected. Consider using a struct instead if public access is needed");
+                if state.auto_fix {
+                    utils::print_no_visibility_fix_warning();
+                }
             }
         }
     }

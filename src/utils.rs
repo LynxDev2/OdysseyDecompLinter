@@ -1,4 +1,4 @@
-use crate::ast_types::{FunctionInfo, TypeDeclaration};
+use crate::types::{FilePathToChangesMap, FunctionInfo, SymbolToFunctionInfoMap, TypeDeclaration};
 use anyhow::Result;
 use clang::Index;
 use colorize::AnsiColor;
@@ -28,13 +28,11 @@ fn get_functions_and_types_with_namespace(
     use clang::EntityKind::*;
     match entity.get_kind() {
         Namespace => {
-            if let Some(name) = entity.get_name() {
-                namespace.push(name.clone());
-                for child in entity.get_children() {
-                    get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
-                }
-                namespace.pop(); // exit namespace
+            namespace.push(entity.get_name().clone().unwrap_or_default());
+            for child in entity.get_children() {
+                get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
             }
+            namespace.pop(); // exit namespace
         }
         FunctionDecl | Method | Constructor => {
             if let Some(mangled) = entity.get_mangled_name() {
@@ -46,12 +44,14 @@ fn get_functions_and_types_with_namespace(
             }
         }
         StructDecl | ClassDecl => {
+            namespace.push(entity.get_name().clone().unwrap_or_default());
             if !entity.get_children().is_empty() {
                 type_decls.push(TypeDeclaration::new(&entity, namespace.clone()));
                 for child in entity.get_children() {
                     get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
                 }
             }
+            namespace.pop();
         }
         _ => {
             for child in entity.get_children() {
@@ -85,8 +85,6 @@ fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBu
     Ok(buf)
 }
 
-pub type SymbolToFunctionInfoMap = HashMap<String, FunctionInfo>;
-
 /// Gets all function declarations (map 1), function definitions (map 2) and type declarations
 /// (hash set) of the project
 pub fn get_project_function_and_types(
@@ -118,12 +116,6 @@ pub fn get_project_function_and_types(
     }
     Ok((decl_map, def_map, type_set))
 }
-
-// Used to store the changes to files that should be applied once all checks have been completed.
-// These can't be strings that are directly changed because the file data libclang points to
-// wouldn't change causing there to be an index mismatch for the next change
-pub type FilePathToChangesMap =
-    std::collections::HashMap<String, Vec<(std::ops::Range<usize>, String)>>;
 
 pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Result<()> {
     for (path, changes) in changes_map {

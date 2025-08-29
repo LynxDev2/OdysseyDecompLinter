@@ -1,11 +1,46 @@
-/// This file contains types that represent AST entities and tokens. All types in this file are constructed
-/// from clang objects. The main advantages of these types are that they give easy access
-/// to all fields from specific kinds of entities that we need and unlike clang objects,
-/// objects of these types aren't tied to the lifetime of the TU in any way
 use clang::token::TokenKind;
 use clang::Accessibility;
 use clang::EntityKind::*;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::Hash;
+
+pub type SymbolToFunctionInfoMap = HashMap<String, FunctionInfo>;
+
+/// Used to store the changes to files that should be applied once all checks have been completed.
+/// These can't be strings that are directly changed because the file data libclang points to
+/// wouldn't change causing there to be an index mismatch for the next change
+pub type FilePathToChangesMap = HashMap<String, Vec<(std::ops::Range<usize>, String)>>;
+
+pub struct LinterSharedState {
+    pub definitions: SymbolToFunctionInfoMap,
+    pub declarations: SymbolToFunctionInfoMap,
+    pub types: HashSet<TypeDeclaration>,
+    pub fixes: FilePathToChangesMap,
+    pub auto_fix: bool,
+}
+
+impl LinterSharedState {
+    pub fn new(
+        declarations: SymbolToFunctionInfoMap,
+        definitions: SymbolToFunctionInfoMap,
+        types: HashSet<TypeDeclaration>,
+        auto_fix: bool,
+    ) -> LinterSharedState {
+        LinterSharedState {
+            definitions,
+            declarations,
+            types,
+            fixes: FilePathToChangesMap::new(),
+            auto_fix,
+        }
+    }
+}
+
+/// These types represent AST entities and tokens. All of these types are constructed
+/// from clang objects. The main advantages of these types are that they give easy access
+/// to all fields from specific kinds of entities that we need and unlike clang objects,
+/// objects of these types aren't tied to the lifetime of the TU in any way
 
 #[derive(Clone, Debug)]
 pub struct FunctionInfo {

@@ -1,13 +1,11 @@
-use std::collections::HashSet;
-
 use anyhow::{Context, Result};
 use argh::FromArgs;
-use ast_types::TypeDeclaration;
 use clang::{Clang, Index};
-use utils::{FilePathToChangesMap, SymbolToFunctionInfoMap};
 
-mod ast_types;
+use crate::types::LinterSharedState;
+
 mod lints;
+mod types;
 mod utils;
 
 const INCLUDE_DIRS: [&str; 6] = [
@@ -28,31 +26,6 @@ struct Args {
     /// check all library directories and not just `src` and `lib/al`
     #[argh(switch, short = 'a')]
     all: bool,
-}
-
-pub struct LinterSharedState {
-    pub definitions: SymbolToFunctionInfoMap,
-    pub declarations: SymbolToFunctionInfoMap,
-    pub types: HashSet<TypeDeclaration>,
-    pub fixes: FilePathToChangesMap,
-    pub auto_fix: bool,
-}
-
-impl LinterSharedState {
-    fn new(
-        declarations: SymbolToFunctionInfoMap,
-        definitions: SymbolToFunctionInfoMap,
-        types: HashSet<TypeDeclaration>,
-        auto_fix: bool,
-    ) -> LinterSharedState {
-        LinterSharedState {
-            definitions,
-            declarations,
-            types,
-            fixes: FilePathToChangesMap::new(),
-            auto_fix,
-        }
-    }
 }
 
 fn main() -> Result<()> {
