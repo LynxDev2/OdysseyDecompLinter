@@ -172,11 +172,14 @@ pub fn cwd_string() -> String {
 }
 
 pub fn print_no_visibility_fix_warning() {
-    println!(
-        "{} {}",
-        "Warning:".bold().red(),
-        "Visibility issues can't be automatically fixed, please fix them manually".red()
+    print_unable_to_fix_warning(
+        "Visibility issues can't be automatically fixed, please fix them manually",
     );
+}
+
+// red() requires &strs to be 'static
+pub fn print_unable_to_fix_warning(warning: &'static str) {
+    println!("{} {}", "Warning:".bold().red(), warning.red());
 }
 
 pub fn print_lint_fail_for_location(path: &str, line: u32, warning: &str) {

@@ -51,6 +51,7 @@ pub struct FunctionInfo {
     pub accessibility: Accessibility,
     pub tokens: Vec<SimpleToken>,
     pub namespace: Vec<String>,
+    pub overriden_method: String,
 }
 
 impl FunctionInfo {
@@ -89,6 +90,14 @@ impl FunctionInfo {
             .get_accessibility()
             .unwrap_or(Accessibility::Public);
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
+        let overriden_method = function_entity
+            .get_overridden_methods()
+            .map(|methods| {
+                methods[0]
+                    .get_mangled_name()
+                    .expect("Virtual functions should always have a valid mangled name")
+            })
+            .unwrap_or_default();
         FunctionInfo {
             name,
             file_path,
@@ -97,6 +106,7 @@ impl FunctionInfo {
             accessibility,
             tokens,
             namespace,
+            overriden_method,
         }
     }
 }

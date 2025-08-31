@@ -1,13 +1,17 @@
+use std::clone;
+
 use clang::{token::TokenKind, Accessibility};
 
 use crate::{
-    types::{FilePathToChangesMap, LinterSharedState, SimpleToken},
+    types::{FilePathToChangesMap, FunctionInfo, LinterSharedState, SimpleToken},
     utils,
 };
 
 pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
-    decl_def_param_names_match(state);
     underscore_suffixed_functions_private(state);
+    override_base_param_names_match(state);
+    decl_def_param_names_match(state);
+    declaration_overriding_keyword(state);
 
     type_declaration_field_naming(state);
     type_declaration_field_accessibility(state);
@@ -33,53 +37,187 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
     }
 }
 
+fn override_base_param_names_match(state: &mut LinterSharedState) {
+    // The map keys need to be cloned for the borrow checked to be happy with other mutable access
+    let decl_symbols: Box<[_]> = state.declarations.keys().cloned().collect();
+    for symbol in &decl_symbols {
+        let declaration = state.declarations.get(symbol).unwrap();
+        if declaration.overriden_method.is_empty() {
+            continue;
+        }
+        let base_method: FunctionInfo = state
+            .declarations
+            .get(&declaration.overriden_method)
+            // Header-implemented virtual functions only appear in the definitions map
+            .or_else(|| state.definitions.get(&declaration.overriden_method))
+            .cloned()
+            .expect(
+                "Functions that override other functions should always have a valid base function",
+            );
+        compare_params(
+            &base_method,
+            state.declarations.get_mut(symbol).unwrap(),
+            &mut state.fixes,
+            state.auto_fix,
+            "base method",
+        );
+
+        if let Some(definition) = state.definitions.get_mut(symbol) {
+            compare_params(
+                &base_method,
+                definition,
+                &mut state.fixes,
+                state.auto_fix,
+                "base method",
+            );
+        }
+    }
+}
+
 fn decl_def_param_names_match(state: &mut LinterSharedState) {
     for (symbol, definition) in &state.definitions {
-        let Some(declaration) = state.declarations.get(symbol.as_str()) else {
+        let Some(declaration) = state.declarations.get_mut(symbol.as_str()) else {
             continue;
         };
+        compare_params(
+            definition,
+            declaration,
+            &mut state.fixes,
+            state.auto_fix,
+            "definition",
+        );
+    }
+}
 
-        for (decl_param, def_param) in declaration.params.iter().zip(&definition.params) {
-            if decl_param.name == def_param.name {
+fn compare_params(
+    source_function: &FunctionInfo,
+    target_function: &mut FunctionInfo,
+    fixes_map: &mut FilePathToChangesMap,
+    auto_fix: bool,
+    source_type: &str,
+) {
+    for (source_param, target_param) in source_function
+        .params
+        .iter()
+        .zip(&mut target_function.params)
+    {
+        if source_param.name == target_param.name {
+            continue;
+        }
+        if source_param.name.is_empty() {
+            utils::print_lint_fail_for_location(
+                &source_function.file_path,
+                source_function.file_line,
+                &format!("Params of {source_type} should not be unnamed",),
+            );
+            if auto_fix {
+                utils::print_unable_to_fix_warning("Param needs to be fixed manually");
+            }
+            continue;
+        }
+        if target_param.name.is_empty() {
+            utils::print_lint_fail_for_location(
+                &target_function.file_path,
+                target_function.file_line,
+                &format!(
+                    "Unnamed param should be {} to match {source_type}",
+                    source_param.name
+                ),
+            );
+        } else {
+            utils::print_lint_fail_for_location(
+                &target_function.file_path,
+                target_function.file_line,
+                &format!(
+                    "Param {} should be {} to match {source_type}",
+                    target_param.name, source_param.name
+                ),
+            );
+        }
+        if auto_fix {
+            let mut replace_with = source_param.name.clone();
+            let changes = fixes_map
+                .entry(target_function.file_path.clone())
+                .or_default();
+            if target_param.name.is_empty() {
+                // Add an extra whitespace for empty param names so that the new param name doesn't
+                // become part of the param type
+                replace_with.insert(0, ' ');
+                changes.push((
+                    target_param.offset_in_file..target_param.offset_in_file,
+                    replace_with.clone(),
+                ));
+            } else {
+                rename_identifier_tokens(
+                    &target_function.tokens,
+                    changes,
+                    &target_param.name,
+                    &replace_with,
+                );
+            }
+            // Update the param name in the shared state so that other lints know about the
+            // new value
+            target_param.name = replace_with;
+        }
+    }
+}
+
+fn rename_identifier_tokens(
+    tokens: &[SimpleToken],
+    changes_for_file: &mut Vec<(std::ops::Range<usize>, String)>,
+    name: &str,
+    new_name: &str,
+) {
+    for ident in tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::Identifier && t.spelling == name)
+    {
+        let range_to_change = (
+            ident.offset_in_file..ident.offset_in_file + name.len(),
+            new_name.to_string(),
+        );
+        changes_for_file.push(range_to_change);
+    }
+}
+
+fn declaration_overriding_keyword(state: &mut LinterSharedState) {
+    for decl in state
+        .declarations
+        .values()
+        .filter(|d| !d.overriden_method.is_empty())
+    {
+        let Some(virtual_token) = decl.tokens.iter().find(|t| t.spelling == "virtual") else {
+            continue;
+        };
+        utils::print_lint_fail_for_location(
+            &decl.file_path,
+            virtual_token.file_line,
+            "Overriding function declarations should be marked with override and not virtual",
+        );
+        if state.auto_fix {
+            let fixes_for_file = state.fixes.entry(decl.file_path.clone()).or_default();
+            let fix = (
+                virtual_token.offset_in_file..virtual_token.offset_in_file + "virtual ".len(),
+                String::new(),
+            );
+            fixes_for_file.push(fix);
+            utils::print_fix_success();
+            if decl.tokens.iter().any(|t| t.spelling == "override") {
                 continue;
             }
-            if decl_param.name.is_empty() {
-                utils::print_lint_fail_for_location(
-                    &declaration.file_path,
-                    declaration.file_line,
-                    &format!(
-                        "Empty param should be {} to match definition",
-                        def_param.name
-                    ),
-                );
-            } else {
-                utils::print_lint_fail_for_location(
-                    &declaration.file_path,
-                    declaration.file_line,
-                    &format!(
-                        "Param {} should be {} to match definition",
-                        decl_param.name, def_param.name
-                    ),
-                );
-            }
-            if state.auto_fix {
-                let mut replace_with = def_param.name.clone();
-                if decl_param.name.is_empty() {
-                    // Add an extra whitespace for empty param names so that the new param name doesn't
-                    // become part of the param type
-                    replace_with.insert(0, ' ');
-                }
-                let range_to_change = (
-                    decl_param.offset_in_file..decl_param.offset_in_file + decl_param.name.len(),
-                    replace_with,
-                );
-                state
-                    .fixes
-                    .entry(declaration.file_path.clone())
-                    .or_default()
-                    .push(range_to_change);
-                utils::print_fix_success();
-            }
+            let last_closing_parent_index = decl
+                .tokens
+                .iter()
+                .rposition(|t| t.spelling == ")")
+                .expect("Function declarations should always have a closing parenthesis");
+            let last_const_index = decl.tokens.iter().rposition(|t| t.spelling == "const");
+            // If there's also a const keyword, get the index that is bigger, otherwise just return
+            // the index of the closing parenthesis
+            let max = last_const_index.map_or(last_closing_parent_index, |c| {
+                c.max(last_closing_parent_index)
+            });
+            let index = decl.tokens[max].offset_in_file + "const".len();
+            fixes_for_file.push((index..index, " override".to_string()));
         }
     }
 }
