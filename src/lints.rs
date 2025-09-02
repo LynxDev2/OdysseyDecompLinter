@@ -12,11 +12,112 @@ pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
     override_base_param_names_match(state);
     decl_def_param_names_match(state);
     declaration_overriding_keyword(state);
-
     type_declaration_field_naming(state);
     type_declaration_field_accessibility(state);
 
     no_unnecessary_namespace_usages(state);
+
+    empty_ctor_dtor_defaulted(state);
+    if_statement_no_explicit_nullptr(state);
+}
+
+fn if_statement_no_explicit_nullptr(state: &mut LinterSharedState) {
+    for def in state.definitions.values() {
+        for (i, token) in def.tokens.iter().enumerate().skip(1) {
+            let operator_token = &def.tokens[i - 1];
+            let prev_tokens = &def.tokens[..i - 1];
+            if token.spelling != "nullptr"
+                || !matches!(operator_token.spelling.as_str(), "==" | "!=")
+            {
+                continue;
+            }
+            // Ensure that the current statement is an if-statement
+            if prev_tokens
+                .iter()
+                .rposition(|t| t.spelling == "if")
+                .is_none_or(|i| {
+                    prev_tokens
+                        .iter()
+                        .rposition(|t| t.spelling == ";")
+                        .unwrap_or(0)
+                        > i
+                })
+            {
+                continue;
+            }
+            utils::print_lint_fail_for_location(
+                &def.file_path,
+                token.file_line,
+                "Explict usage of `nullptr` in if-statements is dissallowed",
+            );
+            if state.auto_fix {
+                let changes_for_file = state.fixes.entry(def.file_path.clone()).or_default();
+                let range_to_change = (
+                    operator_token.offset_in_file..token.offset_in_file + "nullptr".len(),
+                    String::new(),
+                );
+                changes_for_file.push(range_to_change);
+                // Invert condition if necessary
+                if operator_token.spelling == "==" {
+                    // Get the index of the first token before the nullptr that is either a &&, a
+                    // || or a ( that is not from a function call
+                    let if_statement_part_delim_index = prev_tokens
+                        .iter()
+                        .enumerate()
+                        .rposition(|(j, t)| {
+                            t.spelling == "&&"
+                                || t.spelling == "||"
+                                || (t.spelling == "("
+                                    && def.tokens[j - 1].kind != TokenKind::Identifier)
+                        })
+                        .unwrap_or(0);
+                    let if_statement_part_start = &def.tokens[if_statement_part_delim_index + 1];
+                    changes_for_file.push((
+                        if_statement_part_start.offset_in_file
+                            ..if_statement_part_start.offset_in_file,
+                        "!".to_string(),
+                    ));
+                }
+                utils::print_fix_success();
+            }
+        }
+    }
+}
+
+fn empty_ctor_dtor_defaulted(state: &mut LinterSharedState) {
+    for def in state.definitions.values().filter(|d| d.is_ctor_or_dtor) {
+        if def.is_defaulted {
+            continue;
+        }
+        let Some(opening_parent_index) = def.tokens.iter().position(|t| t.spelling == "(") else {
+            continue;
+        };
+        // Looking for ) + { + }
+        let opening_curly = &def.tokens[opening_parent_index + 2];
+        let closing_curly = &def.tokens[opening_parent_index + 3];
+        // Skip ctors/dtors that aren't empty and ctors that take params, call super class ctor(s)
+        // or have an initializer list
+        if closing_curly.spelling != "}" {
+            continue;
+        }
+        utils::print_lint_fail_for_location(
+            &def.file_path,
+            opening_curly.file_line,
+            "Should be defaulted",
+        );
+        if state.auto_fix {
+            let fix = (
+                opening_curly.offset_in_file..closing_curly.offset_in_file + 1,
+                "= default;".to_string(),
+            );
+            state
+                .fixes
+                .entry(def.file_path.clone())
+                .or_default()
+                .push(fix);
+            utils::print_fix_success();
+        }
+    }
 }
 
 fn underscore_suffixed_functions_private(state: &LinterSharedState) {
@@ -42,7 +143,7 @@ fn override_base_param_names_match(state: &mut LinterSharedState) {
     let decl_symbols: Box<[_]> = state.declarations.keys().cloned().collect();
     for symbol in &decl_symbols {
         let declaration = state.declarations.get(symbol).unwrap();
-        if declaration.overriden_method.is_empty() {
+        if declaration.overriden_method.is_empty() || declaration.is_ctor_or_dtor {
             continue;
         }
         let base_method: FunctionInfo = state
@@ -312,7 +413,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 }
                 let fix_change = (
                     field.offset_in_file..field.offset_in_file + field.name.len(),
-                    fix,
+                    fix.clone(),
                 );
                 state
                     .fixes
@@ -324,6 +425,21 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     &type_decl.file_path,
                     field.file_line,
                 );
+                for member_fn_def in state
+                    .definitions
+                    .values()
+                    .filter(|d| d.namespace.last().is_some_and(|n| n == &type_decl.name))
+                {
+                    rename_identifier_tokens(
+                        &member_fn_def.tokens,
+                        state
+                            .fixes
+                            .entry(member_fn_def.file_path.clone())
+                            .or_default(),
+                        &field.name,
+                        &fix,
+                    );
+                }
             };
 
             if let Some(prefix) = OFFSET_VARIABLE_PREFIXES
