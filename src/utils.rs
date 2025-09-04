@@ -34,7 +34,7 @@ fn get_functions_and_types_with_namespace(
             }
             namespace.pop(); // exit namespace
         }
-        FunctionDecl | Method | Constructor => {
+        FunctionDecl | Method | Constructor | Destructor => {
             if let Some(mangled) = entity.get_mangled_name() {
                 functions.push((
                     mangled,

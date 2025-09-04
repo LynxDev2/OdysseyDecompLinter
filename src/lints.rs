@@ -11,7 +11,6 @@ pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
 
     type_declaration_field_naming(state);
     type_declaration_field_accessibility(state);
-
     no_unnecessary_namespace_usages(state);
 }
 
@@ -85,17 +84,12 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
 }
 
 fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
-    for f in state.definitions.values() {
-        check_namespace_usages(
-            &f.tokens,
-            &f.namespace,
-            &f.file_path,
-            &mut state.fixes,
-            state.auto_fix,
-        );
-    }
-
-    for f in state.declarations.values() {
+    for f in state
+        .definitions
+        .values()
+        .chain(state.declarations.values())
+        .filter(|f| !f.tokens.is_empty())
+    {
         check_namespace_usages(
             &f.tokens,
             &f.namespace,
@@ -125,11 +119,48 @@ fn check_namespace_usages(
     changes_map: &mut FilePathToChangesMap,
     auto_fix: bool,
 ) {
-    for (original_i, ident_token) in tokens
+    if namespace.is_empty() {
+        return;
+    }
+    'tokens: for (original_i, ident_token) in tokens
         .iter()
         .enumerate()
         .filter(|(_, t)| t.kind == TokenKind::Identifier)
     {
+        // Allow usage of class name when making function pointers (&A::B) and in function pointer
+        // types (A::*)
+        if (tokens
+            .get(original_i - 1)
+            .is_some_and(|t| t.spelling == "&")
+            || tokens
+                .get(original_i + 2)
+                .is_some_and(|t| t.spelling == "*"))
+            && ident_token.spelling == *namespace.last().unwrap()
+        {
+            continue;
+        }
+
+        // Allow the "A::" abd "B::" in "A::B::c() {}"
+        let Some(opening_parent_index) = tokens.iter().position(|t| t.spelling == "(") else {
+            continue;
+        };
+        if opening_parent_index < 3 {
+            continue;
+        }
+        let mut j = opening_parent_index - 3;
+        if tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator" {
+            j -= 1
+        }
+        while tokens[j + 1].spelling == "::" {
+            if tokens[j].spelling == ident_token.spelling {
+                continue 'tokens;
+            }
+            if j < 2 {
+                break;
+            }
+            j -= 2;
+        }
+
         // Check whether or not the current token is a usage of a namespace the code currently being
         // checked is inside of
         if namespace.contains(&ident_token.spelling)

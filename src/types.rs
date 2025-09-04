@@ -54,11 +54,11 @@ pub struct FunctionInfo {
 }
 
 impl FunctionInfo {
-    pub fn new(function_entity: &clang::Entity, namespace: Vec<String>) -> FunctionInfo {
+    pub fn new(function_entity: &clang::Entity, mut namespace: Vec<String>) -> FunctionInfo {
         assert!(
             matches!(
                 function_entity.get_kind(),
-                FunctionDecl | Method | Constructor
+                FunctionDecl | Method | Constructor | Destructor
             ),
             "Function entity should be of type FunctionDecl, Method or Constructor"
         );
@@ -89,6 +89,23 @@ impl FunctionInfo {
             .get_accessibility()
             .unwrap_or(Accessibility::Public);
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
+        let lexical_parent_name = function_entity
+            .get_lexical_parent()
+            .expect("Function entities should always have a lexical parent")
+            .get_name()
+            .unwrap_or_default();
+        let mut semantic_parent = function_entity.get_semantic_parent();
+        // Add any semantic parents that aren't lexical parents (like "A" and "B" in "A::B::C() {}" to the namespace)
+        while let Some(parent) = semantic_parent {
+            let Some(name) = parent.get_name() else {
+                break;
+            };
+            if name == lexical_parent_name {
+                break;
+            }
+            namespace.push(name);
+            semantic_parent = parent.get_semantic_parent();
+        }
         FunctionInfo {
             name,
             file_path,
