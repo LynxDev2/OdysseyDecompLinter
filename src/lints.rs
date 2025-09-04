@@ -1,5 +1,3 @@
-use std::clone;
-
 use clang::{token::TokenKind, Accessibility};
 
 use crate::{
@@ -86,9 +84,13 @@ fn if_statement_no_explicit_nullptr(state: &mut LinterSharedState) {
 
 fn empty_ctor_dtor_defaulted(state: &mut LinterSharedState) {
     for def in state.definitions.values().filter(|d| d.is_ctor_or_dtor) {
-        if def.is_defaulted {
+        if def.is_defaulted
+        // Some header defined ctors need to be defined with {}, so we skep all of them
+        || def.file_path.ends_with(".h")
+        {
             continue;
         }
+
         let Some(opening_parent_index) = def.tokens.iter().position(|t| t.spelling == "(") else {
             continue;
         };
@@ -364,11 +366,48 @@ fn check_namespace_usages(
     changes_map: &mut FilePathToChangesMap,
     auto_fix: bool,
 ) {
-    for (original_i, ident_token) in tokens
+    if namespace.is_empty() {
+        return;
+    }
+    'tokens: for (original_i, ident_token) in tokens
         .iter()
         .enumerate()
         .filter(|(_, t)| t.kind == TokenKind::Identifier)
     {
+        // Allow usage of class name when making function pointers (&A::B) and in function pointer
+        // types (A::*)
+        if (tokens
+            .get(original_i - 1)
+            .is_some_and(|t| t.spelling == "&")
+            || tokens
+                .get(original_i + 2)
+                .is_some_and(|t| t.spelling == "*"))
+            && ident_token.spelling == *namespace.last().unwrap()
+        {
+            continue;
+        }
+
+        // Allow the "A::" abd "B::" in "A::B::c() {}"
+        let Some(opening_parent_index) = tokens.iter().position(|t| t.spelling == "(") else {
+            continue;
+        };
+        if opening_parent_index < 3 {
+            continue;
+        }
+        let mut j = opening_parent_index - 3;
+        if tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator" {
+            j -= 1
+        }
+        while tokens[j + 1].spelling == "::" {
+            if tokens[j].spelling == ident_token.spelling {
+                continue 'tokens;
+            }
+            if j < 2 {
+                break;
+            }
+            j -= 2;
+        }
+
         // Check whether or not the current token is a usage of a namespace the code currently being
         // checked is inside of
         if namespace.contains(&ident_token.spelling)
