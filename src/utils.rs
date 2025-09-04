@@ -35,13 +35,16 @@ fn get_functions_and_types_with_namespace(
             namespace.pop(); // exit namespace
         }
         FunctionDecl | Method | Constructor | Destructor => {
-            if let Some(mangled) = entity.get_mangled_name() {
-                functions.push((
-                    mangled,
-                    FunctionInfo::new(&entity, namespace.clone()),
-                    !entity.is_definition(),
-                ));
-            }
+            let label = entity.get_mangled_name().unwrap_or_else(|| {
+                entity
+                    .get_name()
+                    .expect("Function entities should always have a valid name field")
+            });
+            functions.push((
+                label,
+                FunctionInfo::new(&entity, namespace.clone()),
+                !entity.is_definition(),
+            ));
         }
         StructDecl | ClassDecl => {
             namespace.push(entity.get_name().clone().unwrap_or_default());

@@ -205,7 +205,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 }
                 let fix_change = (
                     field.offset_in_file..field.offset_in_file + field.name.len(),
-                    fix,
+                    fix.clone(),
                 );
                 state
                     .fixes
@@ -213,10 +213,27 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     .or_default()
                     .push(fix_change);
                 utils::print_fix_success();
-                utils::print_possible_compiler_error_warning_for_line(
-                    &type_decl.file_path,
-                    field.file_line,
-                );
+                if type_decl.is_struct {
+                    utils::print_possible_compiler_error_warning_for_line(
+                        &type_decl.file_path,
+                        field.file_line,
+                    );
+                }
+                for member_fn_def in state
+                    .definitions
+                    .values()
+                    .filter(|d| d.namespace.last().is_some_and(|n| n == &type_decl.name))
+                {
+                    rename_identifier_tokens(
+                        &member_fn_def.tokens,
+                        state
+                            .fixes
+                            .entry(member_fn_def.file_path.clone())
+                            .or_default(),
+                        &field.name,
+                        &fix,
+                    );
+                }
             };
 
             if let Some(prefix) = OFFSET_VARIABLE_PREFIXES
@@ -299,6 +316,24 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 print_fail_for_field_and_add_fix("Boolean member variables should be prefixed with (`m`) `is`, `has` or `always`", field_name_fix);
             }
         }
+    }
+}
+
+fn rename_identifier_tokens(
+    tokens: &[SimpleToken],
+    changes_for_file: &mut Vec<(std::ops::Range<usize>, String)>,
+    name: &str,
+    new_name: &str,
+) {
+    for ident in tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::Identifier && t.spelling == name)
+    {
+        let range_to_change = (
+            ident.offset_in_file..ident.offset_in_file + name.len(),
+            new_name.to_string(),
+        );
+        changes_for_file.push(range_to_change);
     }
 }
 
