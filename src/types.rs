@@ -60,7 +60,7 @@ impl FunctionInfo {
                 function_entity.get_kind(),
                 FunctionDecl | Method | Constructor | Destructor
             ),
-            "Function entity should be of type FunctionDecl, Method or Constructor"
+            "Function entity should be of type FunctionDecl, Method, Constructor or Destructor"
         );
         let loc = function_entity
             .get_location()
