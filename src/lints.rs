@@ -83,6 +83,8 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
     }
 }
 
+// Design decision: will also complain about function calls like `A::fun()`.
+// This causes problems when `fun()` is virtual, as `fun()` generates an indirect and A::fun() generates a direct branch
 fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
     for f in state
         .definitions

@@ -101,6 +101,7 @@ impl FunctionInfo {
                 break;
             };
             if name == lexical_parent_name {
+                // all "outer ones" should be listed in namespace already
                 break;
             }
             namespace.push(name);
