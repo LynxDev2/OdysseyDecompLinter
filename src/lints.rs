@@ -21,7 +21,7 @@ pub fn lint_functions_and_type_declarations(state: &mut LinterSharedState) {
 
 fn if_statement_no_explicit_nullptr(state: &mut LinterSharedState) {
     for def in state.definitions.values() {
-        for (i, token) in def.tokens.iter().enumerate().skip(1) {
+        'tokens: for (i, token) in def.tokens.iter().enumerate().skip(1) {
             let operator_token = &def.tokens[i - 1];
             let prev_tokens = &def.tokens[..i - 1];
             if token.spelling != "nullptr"
@@ -29,20 +29,27 @@ fn if_statement_no_explicit_nullptr(state: &mut LinterSharedState) {
             {
                 continue;
             }
+
             // Ensure that the current statement is an if-statement
-            if prev_tokens
-                .iter()
-                .rposition(|t| t.spelling == "if")
-                .is_none_or(|i| {
-                    prev_tokens
-                        .iter()
-                        .rposition(|t| t.spelling == ";")
-                        .unwrap_or(0)
-                        > i
-                })
-            {
+            let Some(mut j) = prev_tokens.iter().rposition(|t| t.spelling == "if") else {
                 continue;
+            };
+            let mut parenthesis_scope = 0;
+            while j < def.tokens.len() - 1 {
+                j += 1;
+                if def.tokens[j].spelling == "(" {
+                    parenthesis_scope += 1;
+                } else if def.tokens[j].spelling == ")" {
+                    parenthesis_scope -= 1;
+                }
+                if parenthesis_scope == 0 {
+                    continue 'tokens;
+                }
+                if j == i {
+                    break;
+                }
             }
+
             utils::print_lint_fail_for_location(
                 &def.file_path,
                 token.file_line,
@@ -308,18 +315,19 @@ fn declaration_overriding_keyword(state: &mut LinterSharedState) {
             if decl.tokens.iter().any(|t| t.spelling == "override") {
                 continue;
             }
-            let last_closing_parent_index = decl
+            let last_closing_parent_insert_offset = decl
                 .tokens
                 .iter()
-                .rposition(|t| t.spelling == ")")
-                .expect("Function declarations should always have a closing parenthesis");
-            let last_const_index = decl.tokens.iter().rposition(|t| t.spelling == "const");
-            // If there's also a const keyword, get the index that is bigger, otherwise just return
-            // the index of the closing parenthesis
-            let max = last_const_index.map_or(last_closing_parent_index, |c| {
-                c.max(last_closing_parent_index)
+                .rfind(|t| t.spelling == ")")
+                .expect("Function declarations should always have a closing parenthesis")
+                .offset_in_file
+                + 1;
+            let last_const_token = decl.tokens.iter().rfind(|t| t.spelling == "const");
+            // If there's also a const modifier, get the token further in the file, otherwise just return
+            // the location of the closing parenthesis
+            let index = last_const_token.map_or(last_closing_parent_insert_offset, |c| {
+                last_closing_parent_insert_offset.max(c.offset_in_file + "const".len())
             });
-            let index = decl.tokens[max].offset_in_file + "const".len();
             fixes_for_file.push((index..index, " override".to_string()));
         }
     }
