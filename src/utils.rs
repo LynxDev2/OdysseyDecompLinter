@@ -149,7 +149,7 @@ pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Res
         // Sort changes by range start in descending order to avoid different sized replacements
         // from shifting the index of other replacements
         changes.sort_by(|a, b| b.0.start.cmp(&a.0.start));
-        let replacements: Vec<_> = changes
+        let replacements_iter = changes
             .iter()
             .enumerate()
             .filter(|(i, (r, _))| {
@@ -162,10 +162,9 @@ pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Res
                 }
                 true
             })
-            .map(|(_, c)| c)
-            .collect();
+            .map(|(_, c)| c);
 
-        for (range, replacement) in replacements {
+        for (range, replacement) in replacements_iter {
             contents.replace_range(range.clone(), replacement);
         }
 

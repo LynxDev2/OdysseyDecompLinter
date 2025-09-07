@@ -87,7 +87,7 @@ impl FunctionInfo {
             .expect("Function entites should always have a valid source range");
         let accessibility = function_entity
             .get_accessibility()
-            .unwrap_or(Accessibility::Public);
+            .unwrap_or(Accessibility::Private);
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         let lexical_parent_name = function_entity
             .get_lexical_parent()

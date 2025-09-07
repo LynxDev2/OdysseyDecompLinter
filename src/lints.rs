@@ -193,7 +193,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
     const OFFSET_VARIABLE_PREFIXES: [&str; 7] =
         ["pad_", "padding_", "field_", "unk_", "gap_", "filler_", "_"];
     const MISC_ALLOWED_PREFIXES: [&str; 5] = ["pad", "unk", "gap", "filler", "unused"];
-    const BOOL_ALLOWED_PREFIXES: [&str; 4] = ["is", "has", "should", "always"];
+    const BOOL_ALLOWED_PREFIXES: [&str; 5] = ["is", "has", "should", "always", "value"];
     for type_decl in &state.types {
         for field in &type_decl.fields {
             // Field specific utility closures
@@ -313,7 +313,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 } else {
                     format!("mIs{}", &field.name[1..])
                 };
-                print_fail_for_field_and_add_fix("Boolean member variables should be prefixed with (`m`) `is`, `has` or `always`", field_name_fix);
+                print_fail_for_field_and_add_fix("Boolean member variables should be prefixed with (`m`) `is`, `has`, `should`, or `always`", field_name_fix);
             }
         }
     }
