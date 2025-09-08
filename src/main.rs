@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use argh::FromArgs;
 use clang::{Clang, Index};
 
@@ -26,6 +26,9 @@ struct Args {
     /// check all library directories and not just `src` and `lib/al`
     #[argh(switch, short = 'a')]
     all: bool,
+    /// allow applying automatic fixes even when repo has unstaged changes
+    #[argh(switch)]
+    allow_dirty: bool,
 }
 
 fn main() -> Result<()> {
@@ -52,6 +55,11 @@ fn main() -> Result<()> {
     lints::lint_functions_and_type_declarations(&mut shared_state);
 
     if args.fix {
+        if !args.allow_dirty
+            && utils::repo_has_unstaged_or_untracked().context("Failed to get git repo status")?
+        {
+            bail!("Automatic fixes will not be applied because unstaged changes were found. (Use --allow-dirty to override this)");
+        }
         utils::write_changes_to_files(shared_state.fixes)
             .context("Failed to write fixes to source files")?;
     }

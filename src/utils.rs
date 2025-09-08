@@ -7,6 +7,7 @@ use std::{
     fs::{read_dir, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 pub fn find_functions_and_types_in_tu(
@@ -234,4 +235,18 @@ pub fn print_possible_compiler_error_warning_for_line(path: &str, line: u32) {
 
 pub fn print_fix_success() {
     println!("{}", "Fixed".b_green());
+}
+
+pub fn repo_has_unstaged_or_untracked() -> std::io::Result<bool> {
+    // check for unstaged changes
+    let diff_status = Command::new("git").args(["diff", "--quiet"]).status()?;
+    if !diff_status.success() {
+        return Ok(true);
+    }
+
+    // check for untracked files
+    let untracked = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .output()?;
+    Ok(!untracked.stdout.is_empty())
 }
