@@ -43,10 +43,25 @@ impl LinterSharedState {
 /// objects of these types aren't tied to the lifetime of the TU in any way
 
 #[derive(Clone, Debug)]
+pub struct LocationInFile {
+    pub line: u32,
+    pub offset: usize,
+}
+
+impl From<clang::source::Location<'_>> for LocationInFile {
+    fn from(loc: clang::source::Location<'_>) -> Self {
+        LocationInFile {
+            line: loc.line,
+            offset: loc.offset as usize,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct FunctionInfo {
     pub name: String,
     pub file_path: String,
-    pub file_line: u32,
+    pub location: LocationInFile,
     pub params: Vec<FunctionParam>,
     pub accessibility: Accessibility,
     pub tokens: Vec<SimpleToken>,
@@ -98,6 +113,7 @@ impl FunctionInfo {
         // Add any semantic parents that aren't lexical parents (like "A" and "B" in "A::B::C() {}" to the namespace)
         while let Some(parent) = semantic_parent {
             let Some(name) = parent.get_name() else {
+                // anonymous namespaces
                 break;
             };
             if name == lexical_parent_name {
@@ -110,7 +126,7 @@ impl FunctionInfo {
         FunctionInfo {
             name,
             file_path,
-            file_line: loc.line,
+            location: loc.into(),
             params,
             accessibility,
             tokens,
@@ -122,7 +138,7 @@ impl FunctionInfo {
 #[derive(Clone, Debug)]
 pub struct FunctionParam {
     pub name: String,
-    pub offset_in_file: usize,
+    pub location: LocationInFile,
     // TODO: Store default value for OdysseyDecomp#495
 }
 
@@ -130,11 +146,11 @@ impl FunctionParam {
     pub fn new(param_entity: &clang::Entity) -> FunctionParam {
         FunctionParam {
             name: param_entity.get_name().unwrap_or_default(),
-            offset_in_file: param_entity
+            location: param_entity
                 .get_location()
                 .expect("Param entities should always have a valid location")
                 .get_file_location()
-                .offset as usize,
+                .into(),
         }
     }
 }
@@ -203,8 +219,7 @@ impl Hash for TypeDeclaration {
 pub struct TypeField {
     pub name: String,
     pub type_name: String,
-    pub offset_in_file: usize,
-    pub file_line: u32,
+    pub location: LocationInFile,
     pub accessibility: Accessibility,
     pub offset_in_type: Option<usize>,
     pub tokens: Vec<SimpleToken>,
@@ -229,11 +244,10 @@ impl TypeField {
                 .get_type()
                 .expect("Type field entites should always have a valid internal type field")
                 .get_display_name(),
-            offset_in_file: loc.offset as usize,
+            location: loc.into(),
             accessibility: field_entity
                 .get_accessibility()
                 .expect("Type field entites should always have a valid accessibility field"),
-            file_line: loc.line,
             offset_in_type: field_entity
                 .get_offset_of_field()
                 .ok()
@@ -248,18 +262,15 @@ impl TypeField {
 pub struct SimpleToken {
     pub kind: TokenKind,
     pub spelling: String,
-    pub offset_in_file: usize,
-    pub file_line: u32,
+    pub location: LocationInFile,
 }
 
 impl SimpleToken {
     pub fn new(clang_token: &clang::token::Token) -> SimpleToken {
-        let loc = clang_token.get_location().get_file_location();
         SimpleToken {
             kind: clang_token.get_kind(),
             spelling: clang_token.get_spelling(),
-            offset_in_file: loc.offset as usize,
-            file_line: loc.line,
+            location: clang_token.get_location().get_file_location().into(),
         }
     }
 }

@@ -23,7 +23,7 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
     for decl in incorrect_accessibility_decls {
         utils::print_lint_fail_for_location(
             &decl.file_path,
-            decl.file_line,
+            decl.location.line,
             "Function declaration should be made private since it ends with an underscore, or underscore should be removed from function name",
         );
         if state.auto_fix {
@@ -45,7 +45,7 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
             if decl_param.name.is_empty() {
                 utils::print_lint_fail_for_location(
                     &declaration.file_path,
-                    declaration.file_line,
+                    declaration.location.line,
                     &format!(
                         "Empty param should be {} to match definition",
                         def_param.name
@@ -54,7 +54,7 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
             } else {
                 utils::print_lint_fail_for_location(
                     &declaration.file_path,
-                    declaration.file_line,
+                    declaration.location.line,
                     &format!(
                         "Param {} should be {} to match definition",
                         decl_param.name, def_param.name
@@ -69,7 +69,7 @@ fn decl_def_param_names_match(state: &mut LinterSharedState) {
                     replace_with.insert(0, ' ');
                 }
                 let range_to_change = (
-                    decl_param.offset_in_file..decl_param.offset_in_file + decl_param.name.len(),
+                    decl_param.location.offset..decl_param.location.offset + decl_param.name.len(),
                     replace_with,
                 );
                 state
@@ -172,13 +172,13 @@ fn check_namespace_usages(
         {
             utils::print_lint_fail_for_location(
                 file_path,
-                ident_token.file_line,
+                ident_token.location.line,
                 &format!("{}:: should be omitted here", ident_token.spelling),
             );
             if auto_fix {
                 let fix = (
-                    ident_token.offset_in_file
-                        ..ident_token.offset_in_file + ident_token.spelling.len() + 2, // Add 2 for "::"
+                    ident_token.location.offset
+                        ..ident_token.location.offset + ident_token.spelling.len() + 2, // Add 2 for "::"
                     String::new(),
                 );
                 changes_map
@@ -200,13 +200,17 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
         for field in &type_decl.fields {
             // Field specific utility closures
             let mut print_fail_for_field_and_add_fix = |warning: &str, fix: String| {
-                utils::print_lint_fail_for_location(&type_decl.file_path, field.file_line, warning);
+                utils::print_lint_fail_for_location(
+                    &type_decl.file_path,
+                    field.location.line,
+                    warning,
+                );
 
                 if !state.auto_fix {
                     return;
                 }
                 let fix_change = (
-                    field.offset_in_file..field.offset_in_file + field.name.len(),
+                    field.location.offset..field.location.offset + field.name.len(),
                     fix.clone(),
                 );
                 state
@@ -218,7 +222,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 if type_decl.is_struct {
                     utils::print_possible_compiler_error_warning_for_line(
                         &type_decl.file_path,
-                        field.file_line,
+                        field.location.line,
                     );
                 }
                 for member_fn_def in state
@@ -321,6 +325,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
     }
 }
 
+// does not handle variable shadowing (renames everything matching given identifier)
 fn rename_identifier_tokens(
     tokens: &[SimpleToken],
     changes_for_file: &mut Vec<(std::ops::Range<usize>, String)>,
@@ -332,7 +337,7 @@ fn rename_identifier_tokens(
         .filter(|t| t.kind == TokenKind::Identifier && t.spelling == name)
     {
         let range_to_change = (
-            ident.offset_in_file..ident.offset_in_file + name.len(),
+            ident.location.offset..ident.location.offset + name.len(),
             new_name.to_string(),
         );
         changes_for_file.push(range_to_change);
@@ -346,7 +351,7 @@ fn type_declaration_field_accessibility(state: &mut LinterSharedState) {
                 if field.accessibility != Accessibility::Public {
                     utils::print_lint_fail_for_location(
                         &type_decl.file_path,
-                        field.file_line,
+                        field.location.line,
                         "Struct member variables should always be public",
                     );
                     if state.auto_fix {
@@ -356,7 +361,7 @@ fn type_declaration_field_accessibility(state: &mut LinterSharedState) {
             } else if field.accessibility == Accessibility::Public {
                 utils::print_lint_fail_for_location(
                         &type_decl.file_path,
-                        field.file_line,
+                        field.location.line,
                     "Class member variables should always be private or protected. Consider using a struct instead if public access is needed");
                 if state.auto_fix {
                     utils::print_no_visibility_fix_warning();
