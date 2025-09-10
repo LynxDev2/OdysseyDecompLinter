@@ -17,6 +17,10 @@ const INCLUDE_DIRS: [&str; 6] = [
     "lib/eui",
 ];
 
+const MISC_LIBCLANG_FLAGS: [&str; 2] = [
+    "-nostdinc", "-nostdinc++"
+];
+
 /// lint decomp project using libclang
 #[derive(FromArgs)]
 struct Args {
@@ -44,10 +48,12 @@ fn main() -> Result<()> {
 
     let cwd = utils::cwd_string();
 
-    let include_flags = INCLUDE_DIRS.map(|d| format!("-I{cwd}/{d}"));
+    let mut clang_flags = INCLUDE_DIRS.map(|d| format!("-I{cwd}/{d}")).to_vec();
+
+    clang_flags.extend_from_slice(&MISC_LIBCLANG_FLAGS.map(String::from));
 
     let (declarations, definitions, types) =
-        utils::get_project_function_and_types(check_paths, &include_flags, &index)
+        utils::get_project_function_and_types(check_paths, &clang_flags, &index)
             .context("Failed to get project function and types")?;
 
     let mut shared_state = LinterSharedState::new(declarations, definitions, types, args.fix);
