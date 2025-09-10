@@ -126,6 +126,7 @@ pub fn get_project_function_and_types(
     let mut def_map: SymbolToFunctionInfoMap = HashMap::with_capacity(10_000);
     let mut type_set: HashSet<TypeDeclaration> = HashSet::with_capacity(500);
 
+    let mut read_time: f32 = 0.0;
     for dir in dirs {
         for file in get_cpp_files_recursive(dir)? {
             let file_modified = file.metadata()?.modified()?;
@@ -133,7 +134,10 @@ pub fn get_project_function_and_types(
             let cache_file_path = format!(".cache/decomp-linter/{}", make_path_relative_from_cwd(file.as_path().to_str().unwrap()).replace("/", "_"));
             let (decls, defs, types) = if fs::metadata(&cache_file_path).is_ok_and(|m| m.modified().is_ok_and(|cache_modified| cache_modified >= file_modified)) {
                 let mut cache_file = File::open(cache_file_path)?;
-                bincode::decode_from_std_read(&mut cache_file, bincode::config::standard())?
+                let now = std::time::SystemTime::now();
+                let read = bincode::decode_from_std_read(&mut cache_file, bincode::config::standard())?;
+                read_time += now.elapsed()?.as_secs_f32();
+                read
             } else {
                 let mut tu_data = find_functions_and_types_in_tu(tu.get_entity());
                 let (decls, defs, types) = &mut tu_data;
@@ -149,6 +153,7 @@ pub fn get_project_function_and_types(
             type_set.extend(types);
         }
     }
+    println!("Took to read: {}", read_time);
     Ok((decl_map, def_map, type_set))
 }
 
