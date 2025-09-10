@@ -1,5 +1,3 @@
-use clang::{token::TokenKind, Accessibility};
-
 use crate::{
     types::{FilePathToChangesMap, LinterSharedState, SimpleToken},
     utils,
@@ -18,7 +16,7 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
     let incorrect_accessibility_decls: Vec<_> = state
         .declarations
         .values()
-        .filter(|d| d.name.ends_with("_") && d.accessibility != Accessibility::Private)
+        .filter(|d| d.name.ends_with("_") && d.is_public)
         .collect();
     for decl in incorrect_accessibility_decls {
         utils::print_lint_fail_for_location(
@@ -127,7 +125,7 @@ fn check_namespace_usages(
     'tokens: for (original_i, ident_token) in tokens
         .iter()
         .enumerate()
-        .filter(|(_, t)| t.kind == TokenKind::Identifier)
+        .filter(|(_, t)| t.is_identifier)
     {
         // Allow usage of class name when making function pointers (&A::B) and in function pointer
         // types (A::*)
@@ -168,7 +166,7 @@ fn check_namespace_usages(
         if namespace.contains(&ident_token.spelling)
             && tokens
                 .get(original_i + 1)
-                .is_some_and(|t| t.kind == TokenKind::Punctuation && t.spelling == "::")
+                .is_some_and(|t| t.spelling == "::")
         {
             utils::print_lint_fail_for_location(
                 file_path,
@@ -334,7 +332,7 @@ fn rename_identifier_tokens(
 ) {
     for ident in tokens
         .iter()
-        .filter(|t| t.kind == TokenKind::Identifier && t.spelling == name)
+        .filter(|t| t.is_identifier && t.spelling == name)
     {
         let range_to_change = (
             ident.location.offset..ident.location.offset + name.len(),
@@ -348,7 +346,7 @@ fn type_declaration_field_accessibility(state: &mut LinterSharedState) {
     for type_decl in &state.types {
         for field in &type_decl.fields {
             if type_decl.is_struct {
-                if field.accessibility != Accessibility::Public {
+                if !field.is_public {
                     utils::print_lint_fail_for_location(
                         &type_decl.file_path,
                         field.location.line,
@@ -358,7 +356,7 @@ fn type_declaration_field_accessibility(state: &mut LinterSharedState) {
                         utils::print_no_visibility_fix_warning();
                     }
                 }
-            } else if field.accessibility == Accessibility::Public {
+            } else if field.is_public {
                 utils::print_lint_fail_for_location(
                         &type_decl.file_path,
                         field.location.line,

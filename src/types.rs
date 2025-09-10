@@ -1,3 +1,5 @@
+use bincode::Decode;
+use bincode::Encode;
 use clang::token::TokenKind;
 use clang::Accessibility;
 use clang::EntityKind::*;
@@ -42,7 +44,7 @@ impl LinterSharedState {
 /// to all fields from specific kinds of entities that we need and unlike clang objects,
 /// objects of these types aren't tied to the lifetime of the TU in any way
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct LocationInFile {
     pub line: u32,
     pub offset: usize,
@@ -57,13 +59,13 @@ impl From<clang::source::Location<'_>> for LocationInFile {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct FunctionInfo {
     pub name: String,
     pub file_path: String,
     pub location: LocationInFile,
     pub params: Vec<FunctionParam>,
-    pub accessibility: Accessibility,
+    pub is_public: bool,
     pub tokens: Vec<SimpleToken>,
     pub namespace: Vec<String>,
 }
@@ -100,9 +102,9 @@ impl FunctionInfo {
         let range = function_entity
             .get_range()
             .expect("Function entites should always have a valid source range");
-        let accessibility = function_entity
+        let is_public = function_entity
             .get_accessibility()
-            .unwrap_or(Accessibility::Private);
+            .unwrap_or(Accessibility::Private) == Accessibility::Public;
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         let lexical_parent_name = function_entity
             .get_lexical_parent()
@@ -128,14 +130,14 @@ impl FunctionInfo {
             file_path,
             location: loc.into(),
             params,
-            accessibility,
+            is_public,
             tokens,
             namespace,
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct FunctionParam {
     pub name: String,
     pub location: LocationInFile,
@@ -155,7 +157,7 @@ impl FunctionParam {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct TypeDeclaration {
     pub name: String,
     pub is_struct: bool, // true = struct, false = class
@@ -215,12 +217,12 @@ impl Hash for TypeDeclaration {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct TypeField {
     pub name: String,
     pub type_name: String,
     pub location: LocationInFile,
-    pub accessibility: Accessibility,
+    pub is_public: bool,
     pub offset_in_type: Option<usize>,
     pub tokens: Vec<SimpleToken>,
 }
@@ -245,9 +247,9 @@ impl TypeField {
                 .expect("Type field entites should always have a valid internal type field")
                 .get_display_name(),
             location: loc.into(),
-            accessibility: field_entity
+            is_public: field_entity
                 .get_accessibility()
-                .expect("Type field entites should always have a valid accessibility field"),
+                .expect("Type field entites should always have a valid accessibility field") == Accessibility::Public,
             offset_in_type: field_entity
                 .get_offset_of_field()
                 .ok()
@@ -258,9 +260,9 @@ impl TypeField {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct SimpleToken {
-    pub kind: TokenKind,
+    pub is_identifier: bool,
     pub spelling: String,
     pub location: LocationInFile,
 }
@@ -268,7 +270,7 @@ pub struct SimpleToken {
 impl SimpleToken {
     pub fn new(clang_token: &clang::token::Token) -> SimpleToken {
         SimpleToken {
-            kind: clang_token.get_kind(),
+            is_identifier: clang_token.get_kind() == TokenKind::Identifier,
             spelling: clang_token.get_spelling(),
             location: clang_token.get_location().get_file_location().into(),
         }

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.98"
 argh = "0.1.13"
+bincode = { version = "2.0.1", features = ["derive"] }
 # The version on crates.io is outdated, so we fetch from github instead
 # FIXME: use upstream repo instead once https://github.com/KyleMayes/clang-rs/pull/60 is merged
 clang = { git = "https://github.com/pstiasny/clang-rs.git", branch = "master", version = "2.0.0", features = ["runtime", "clang_10_0"] }

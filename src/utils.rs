@@ -4,7 +4,7 @@ use clang::Index;
 use colorize::AnsiColor;
 use std::{
     collections::{HashMap, HashSet},
-    fs::{read_dir, OpenOptions},
+    fs::{self, read_dir, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -128,8 +128,22 @@ pub fn get_project_function_and_types(
 
     for dir in dirs {
         for file in get_cpp_files_recursive(dir)? {
+            let file_modified = file.metadata()?.modified()?;
             let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
-            let (decls, defs, types) = find_functions_and_types_in_tu(tu.get_entity());
+            let cache_file_path = format!(".cache/decomp-linter/{}", make_path_relative_from_cwd(file.as_path().to_str().unwrap()).replace("/", "_"));
+            let (decls, defs, types) = if fs::metadata(&cache_file_path).is_ok_and(|m| m.modified().is_ok_and(|cache_modified| cache_modified >= file_modified)) {
+                let mut cache_file = File::open(cache_file_path)?;
+                bincode::decode_from_std_read(&mut cache_file, bincode::config::standard())?
+            } else {
+                let mut tu_data = find_functions_and_types_in_tu(tu.get_entity());
+                let (decls, defs, types) = &mut tu_data;
+                decls.retain(|k, _| !decl_map.contains_key(k.as_str()));
+                defs.retain(|k, _| !decl_map.contains_key(k.as_str()));
+                types.retain(|t| !type_set.contains(t));
+                let mut cache_file = File::create(cache_file_path)?;
+                bincode::encode_into_std_write(tu_data.clone(), &mut cache_file, bincode::config::standard())?;
+                tu_data
+            };
             decl_map.extend(decls);
             def_map.extend(defs);
             type_set.extend(types);
