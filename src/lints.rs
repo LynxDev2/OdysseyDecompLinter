@@ -132,7 +132,7 @@ fn check_namespace_usages(
         // Allow usage of class name when making function pointers (&A::B) and in function pointer
         // types (A::*)
         if (tokens
-            .get(original_i - 1)
+            .get(original_i.wrapping_sub(1))
             .is_some_and(|t| t.spelling == "&")
             || tokens
                 .get(original_i + 2)
@@ -150,7 +150,7 @@ fn check_namespace_usages(
             continue;
         }
         let mut j = opening_parent_index - 3;
-        if tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator" {
+        if (tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator") && j > 0 {
             j -= 1
         }
         while tokens[j + 1].spelling == "::" {

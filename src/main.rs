@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         if !args.allow_dirty
             && utils::repo_has_unstaged_or_untracked().context("Failed to get git repo status")?
         {
-            bail!("Automatic fixes will not be applied because unstaged changes were found. (Use --allow-dirty to override this)");
+            bail!("Automatic fixes will not be applied because unstaged changes were found.\nPlease commit or stage your current progress to ensure nothing is lost.\nAlternatively, if you are really sure, use --allow-dirty to apply fixes anyways.");
         }
         utils::write_changes_to_files(shared_state.fixes)
             .context("Failed to write fixes to source files")?;
