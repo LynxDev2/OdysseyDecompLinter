@@ -12,6 +12,7 @@ use std::{
 
 pub fn find_functions_and_types_in_tu(
     tu_ast: clang::Entity,
+    parse_all: bool,
 ) -> (
     SymbolToFunctionInfoMap,
     SymbolToFunctionInfoMap,
@@ -27,6 +28,7 @@ pub fn find_functions_and_types_in_tu(
         &mut def_map,
         &mut type_set,
         &mut namespace,
+        parse_all,
     );
     (decl_map, def_map, type_set)
 }
@@ -37,15 +39,30 @@ fn get_functions_and_types_with_namespace(
     def_map: &mut SymbolToFunctionInfoMap,
     type_set: &mut HashSet<TypeDeclaration>,
     namespace: &mut Vec<String>,
+    parse_all: bool,
 ) {
     use clang::EntityKind::*;
+    if let Some(loc) = entity.get_location() {
+        let entity_file_path = loc.get_file_location().file.unwrap().get_path();
+        let relative_path = make_path_relative_from_cwd(
+            entity_file_path
+                .to_str()
+                .expect("File path should always be valid as a &str"),
+        );
+        if !relative_path.starts_with("src/")
+            && !relative_path.starts_with("lib/al")
+            && (!parse_all || !relative_path.starts_with("lib/"))
+        {
+            return;
+        }
+    };
     let children = entity.get_children();
     match entity.get_kind() {
         Namespace => {
             namespace.push(entity.get_name().clone().unwrap_or_default());
             for child in children {
                 get_functions_and_types_with_namespace(
-                    child, decl_map, def_map, type_set, namespace,
+                    child, decl_map, def_map, type_set, namespace, parse_all,
                 );
             }
             namespace.pop(); // exit namespace
@@ -72,7 +89,7 @@ fn get_functions_and_types_with_namespace(
             type_set.insert(TypeDeclaration::new(&entity, namespace.clone()));
             for child in children {
                 get_functions_and_types_with_namespace(
-                    child, decl_map, def_map, type_set, namespace,
+                    child, decl_map, def_map, type_set, namespace, parse_all,
                 );
             }
             namespace.pop();
@@ -80,7 +97,7 @@ fn get_functions_and_types_with_namespace(
         _ => {
             for child in children {
                 get_functions_and_types_with_namespace(
-                    child, decl_map, def_map, type_set, namespace,
+                    child, decl_map, def_map, type_set, namespace, parse_all,
                 );
             }
         }
@@ -114,9 +131,10 @@ fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBu
 /// Gets all function declarations (map 1), function definitions (map 2) and type declarations
 /// (hash set) of the project
 pub fn get_project_function_and_types(
-    dirs: &[impl AsRef<Path>],
+    parse_all: bool,
     clang_flags: &[impl AsRef<str>],
     clang_index: &Index,
+    specified_files: Vec<PathBuf>,
 ) -> Result<(
     SymbolToFunctionInfoMap,
     SymbolToFunctionInfoMap,
@@ -126,15 +144,34 @@ pub fn get_project_function_and_types(
     let mut def_map: SymbolToFunctionInfoMap = HashMap::with_capacity(10_000);
     let mut type_set: HashSet<TypeDeclaration> = HashSet::with_capacity(500);
 
-    for dir in dirs {
-        for file in get_cpp_files_recursive(dir)? {
-            let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
-            let (decls, defs, types) = find_functions_and_types_in_tu(tu.get_entity());
-            decl_map.extend(decls);
-            def_map.extend(defs);
-            type_set.extend(types);
+    let dirs = if parse_all {
+        &["src", "lib"]
+    } else {
+        &["src", "lib/al"]
+    };
+
+    let mut files = Vec::new();
+    let has_specified_files = !specified_files.is_empty();
+
+    if has_specified_files {
+        files = specified_files;
+    } else {
+        for dir in dirs {
+            files.extend(get_cpp_files_recursive(dir)?.into_iter());
         }
     }
+
+    println!("Parsing files and collecting fixes... this can take multiple minutes");
+
+    for file in files {
+        let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
+        let (decls, defs, types) =
+            find_functions_and_types_in_tu(tu.get_entity(), parse_all || has_specified_files);
+        decl_map.extend(decls);
+        def_map.extend(defs);
+        type_set.extend(types);
+    }
+
     Ok((decl_map, def_map, type_set))
 }
 

@@ -250,13 +250,12 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 if offset.bytes().any(|b| b.is_ascii_uppercase()) {
                     print_fail_for_field_and_add_fix(
                         "Offset variables should be all lowercase",
-                        format!("{prefix}{}", field.name.to_lowercase()),
+                        format!("{prefix}{}", offset.to_lowercase()),
                     );
                     continue;
                 }
-                // libclang often fails to get the offset of fields even in cases where the C++ offsetof would probably work
-                // (sometimes due to inheritance, sometimes due to non pointer non basic types, etc.),
-                // which is why this often won't report all incorect offset variables, but it's better than nothing
+                // Offset is None when the parent type contains field(s) that have a type from a
+                // generic parameter
                 if let Some(actual_offset) = field.offset_in_type {
                     if offset != format!("{actual_offset:x}") {
                         print_fail_for_field_and_add_fix(&format!(
@@ -291,8 +290,10 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     continue;
                 }
 
-                if field_name_bytes[0].is_ascii_uppercase()
-                    || (field.name.starts_with("m") && field_name_bytes[1].is_ascii_uppercase())
+                if field_name_bytes.len() > 1
+                    && (field_name_bytes[0].is_ascii_uppercase()
+                        || (field.name.starts_with("m")
+                            && field_name_bytes[1].is_ascii_uppercase()))
                 {
                     print_fail_for_field_and_add_fix(
                         "Member variables of structs should be formatted as noPrefixCamelCase",
