@@ -1,3 +1,5 @@
+use std::{fs, path::PathBuf};
+
 use anyhow::{bail, Context, Result};
 use argh::FromArgs;
 use clang::{Clang, Index};
@@ -8,17 +10,14 @@ mod lints;
 mod types;
 mod utils;
 
-const INCLUDE_DIRS: [&str; 6] = [
+const INCLUDE_DIRS: [&str; 7] = [
     "src",
     "lib/al",
-    "lib/sead",
-    "lib/NintendoSDK",
-    "lib/agl",
-    "lib/eui",
-];
-
-const MISC_LIBCLANG_FLAGS: [&str; 2] = [
-    "-nostdinc", "-nostdinc++"
+    "lib/sead/include",
+    "lib/NintendoSDK/include",
+    "lib/agl/include",
+    "lib/eui/include",
+    "toolchain/include",
 ];
 
 /// lint decomp project using libclang
@@ -33,30 +32,40 @@ struct Args {
     /// allow applying automatic fixes even when repo has unstaged changes
     #[argh(switch)]
     allow_dirty: bool,
+    /// lint only specified files
+    #[argh(positional, greedy)]
+    files: Vec<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args: Args = argh::from_env();
+
+    for path in &args.files {
+        if !path.is_file() {
+            bail!("{path:?}: Not a file");
+        }
+        if path.extension().unwrap_or_default() != "cpp" {
+            bail!("{path:?}: Not a cpp file");
+        }
+    }
+
+
+    let now = std::time::SystemTime::now();
+
     let clang = Clang::new().map_err(anyhow::Error::msg)?;
     let index = Index::new(&clang, false, false);
 
-    let check_paths: &[&'static str] = if args.all {
-        &INCLUDE_DIRS
-    } else {
-        &["src", "lib/al"]
-    };
-
     let cwd = utils::cwd_string();
 
-    let mut clang_flags = INCLUDE_DIRS.map(|d| format!("-I{cwd}/{d}")).to_vec();
-
-    clang_flags.extend_from_slice(&MISC_LIBCLANG_FLAGS.map(String::from));
+    let include_flags = INCLUDE_DIRS.map(|d| format!("-I{cwd}/{d}"));
 
     let (declarations, definitions, types) =
-        utils::get_project_function_and_types(check_paths, &clang_flags, &index)
+        utils::get_project_function_and_types(args.all, &include_flags, &index, args.files)
             .context("Failed to get project function and types")?;
 
     let mut shared_state = LinterSharedState::new(declarations, definitions, types, args.fix);
+
+    println!("Took to setup and parse: {}", now.elapsed()?.as_secs_f32());
 
     lints::lint_functions_and_type_declarations(&mut shared_state);
 

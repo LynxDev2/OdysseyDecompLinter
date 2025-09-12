@@ -4,14 +4,17 @@ use clang::Index;
 use colorize::AnsiColor;
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, read_dir, File, OpenOptions},
+    fs::{self, read_dir, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::Command,
 };
 
+use std::fs::File;
+
 pub fn find_functions_and_types_in_tu(
     tu_ast: clang::Entity,
+    parse_all: bool,
 ) -> (
     SymbolToFunctionInfoMap,
     SymbolToFunctionInfoMap,
@@ -27,6 +30,7 @@ pub fn find_functions_and_types_in_tu(
         &mut def_map,
         &mut type_set,
         &mut namespace,
+        parse_all,
     );
     (decl_map, def_map, type_set)
 }
@@ -37,15 +41,30 @@ fn get_functions_and_types_with_namespace(
     def_map: &mut SymbolToFunctionInfoMap,
     type_set: &mut HashSet<TypeDeclaration>,
     namespace: &mut Vec<String>,
+    parse_all: bool,
 ) {
     use clang::EntityKind::*;
+    if let Some(loc) = entity.get_location() {
+        let entity_file_path = loc.get_file_location().file.unwrap().get_path();
+        let relative_path = make_path_relative_from_cwd(
+            entity_file_path
+                .to_str()
+                .expect("File path should always be valid as a &str"),
+        );
+        if !relative_path.starts_with("src/")
+            && !relative_path.starts_with("lib/al")
+            && (!parse_all || !relative_path.starts_with("lib/"))
+        {
+            return;
+        }
+    };
     let children = entity.get_children();
     match entity.get_kind() {
         Namespace => {
             namespace.push(entity.get_name().clone().unwrap_or_default());
             for child in children {
                 get_functions_and_types_with_namespace(
-                    child, decl_map, def_map, type_set, namespace,
+                    child, decl_map, def_map, type_set, namespace, parse_all,
                 );
             }
             namespace.pop(); // exit namespace
@@ -72,7 +91,7 @@ fn get_functions_and_types_with_namespace(
             type_set.insert(TypeDeclaration::new(&entity, namespace.clone()));
             for child in children {
                 get_functions_and_types_with_namespace(
-                    child, decl_map, def_map, type_set, namespace,
+                    child, decl_map, def_map, type_set, namespace, parse_all,
                 );
             }
             namespace.pop();
@@ -80,7 +99,7 @@ fn get_functions_and_types_with_namespace(
         _ => {
             for child in children {
                 get_functions_and_types_with_namespace(
-                    child, decl_map, def_map, type_set, namespace,
+                    child, decl_map, def_map, type_set, namespace, parse_all,
                 );
             }
         }
@@ -114,9 +133,10 @@ fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBu
 /// Gets all function declarations (map 1), function definitions (map 2) and type declarations
 /// (hash set) of the project
 pub fn get_project_function_and_types(
-    dirs: &[impl AsRef<Path>],
+    parse_all: bool,
     clang_flags: &[impl AsRef<str>],
     clang_index: &Index,
+    specified_files: Vec<PathBuf>,
 ) -> Result<(
     SymbolToFunctionInfoMap,
     SymbolToFunctionInfoMap,
@@ -126,34 +146,65 @@ pub fn get_project_function_and_types(
     let mut def_map: SymbolToFunctionInfoMap = HashMap::with_capacity(10_000);
     let mut type_set: HashSet<TypeDeclaration> = HashSet::with_capacity(500);
 
-    let mut read_time: f32 = 0.0;
-    for dir in dirs {
-        for file in get_cpp_files_recursive(dir)? {
-            let file_modified = file.metadata()?.modified()?;
-            let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
-            let cache_file_path = format!(".cache/decomp-linter/{}", make_path_relative_from_cwd(file.as_path().to_str().unwrap()).replace("/", "_"));
-            let (decls, defs, types) = if fs::metadata(&cache_file_path).is_ok_and(|m| m.modified().is_ok_and(|cache_modified| cache_modified >= file_modified)) {
-                let mut cache_file = File::open(cache_file_path)?;
-                let now = std::time::SystemTime::now();
-                let read = bincode::decode_from_std_read(&mut cache_file, bincode::config::standard())?;
-                read_time += now.elapsed()?.as_secs_f32();
-                read
-            } else {
-                let mut tu_data = find_functions_and_types_in_tu(tu.get_entity());
-                let (decls, defs, types) = &mut tu_data;
-                decls.retain(|k, _| !decl_map.contains_key(k.as_str()));
-                defs.retain(|k, _| !decl_map.contains_key(k.as_str()));
-                types.retain(|t| !type_set.contains(t));
-                let mut cache_file = File::create(cache_file_path)?;
-                bincode::encode_into_std_write(tu_data.clone(), &mut cache_file, bincode::config::standard())?;
-                tu_data
-            };
-            decl_map.extend(decls);
-            def_map.extend(defs);
-            type_set.extend(types);
+    let dirs = if parse_all {
+        &["src", "lib"]
+    } else {
+        &["src", "lib/al"]
+    };
+
+    let mut files = Vec::new();
+    let has_specified_files = !specified_files.is_empty();
+
+    if has_specified_files {
+        files = specified_files;
+    } else {
+        for dir in dirs {
+            files.extend(get_cpp_files_recursive(dir)?.into_iter());
         }
     }
+
+    let mut read_time: f32 = 0.0;
+    let mut parse_time: f32 = 0.0;
+    for file in files {
+        let file_modified = file.metadata()?.modified()?;
+        let cache_file_path = format!(
+            ".cache/decomp-linter/{}",
+            make_path_relative_from_cwd(file.as_path().to_str().unwrap()).replace("/", "_")
+        );
+
+        let now = std::time::SystemTime::now();
+        let (decls, defs, types) = if fs::metadata(&cache_file_path).is_ok_and(|m| {
+            m.modified()
+                .is_ok_and(|cache_modified| cache_modified >= file_modified)
+        }) {
+            let mut cache_file = File::open(cache_file_path)?;
+            let read = bincode::decode_from_std_read(&mut cache_file, bincode::config::standard())?;
+            read_time += now.elapsed()?.as_secs_f32();
+            read
+        } else {
+            let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
+            let mut tu_data = find_functions_and_types_in_tu(tu.get_entity(), parse_all || has_specified_files);
+            let (decls, defs, types) = &mut tu_data;
+            decls.retain(|k, _| !decl_map.contains_key(k.as_str()));
+            defs.retain(|k, _| !decl_map.contains_key(k.as_str()));
+            types.retain(|t| !type_set.contains(t));
+            let mut cache_file = File::create(cache_file_path)?;
+            bincode::encode_into_std_write(
+                tu_data.clone(),
+                &mut cache_file,
+                bincode::config::standard(),
+            )?;
+            parse_time += now.elapsed()?.as_secs_f32();
+            tu_data
+        };
+
+        decl_map.extend(decls);
+        def_map.extend(defs);
+        type_set.extend(types);
+    }
+
     println!("Took to read: {}", read_time);
+    println!("Took to parse: {}", parse_time);
     Ok((decl_map, def_map, type_set))
 }
 

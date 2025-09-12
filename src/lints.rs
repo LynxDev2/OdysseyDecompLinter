@@ -122,10 +122,8 @@ fn check_namespace_usages(
     if namespace.is_empty() {
         return;
     }
-    'tokens: for (original_i, ident_token) in tokens
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| t.is_identifier)
+    'tokens: for (original_i, ident_token) in
+        tokens.iter().enumerate().filter(|(_, t)| t.is_identifier)
     {
         // Allow usage of class name when making function pointers (&A::B) and in function pointer
         // types (A::*)

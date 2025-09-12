@@ -104,7 +104,8 @@ impl FunctionInfo {
             .expect("Function entites should always have a valid source range");
         let is_public = function_entity
             .get_accessibility()
-            .unwrap_or(Accessibility::Private) == Accessibility::Public;
+            .unwrap_or(Accessibility::Private)
+            == Accessibility::Public;
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         let lexical_parent_name = function_entity
             .get_lexical_parent()
@@ -249,7 +250,8 @@ impl TypeField {
             location: loc.into(),
             is_public: field_entity
                 .get_accessibility()
-                .expect("Type field entites should always have a valid accessibility field") == Accessibility::Public,
+                .expect("Type field entites should always have a valid accessibility field")
+                == Accessibility::Public,
             offset_in_type: field_entity
                 .get_offset_of_field()
                 .ok()
