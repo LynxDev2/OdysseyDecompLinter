@@ -7,30 +7,63 @@ use std::{
     fs::{read_dir, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 pub fn find_functions_and_types_in_tu(
     tu_ast: clang::Entity,
-) -> (Vec<(String, FunctionInfo, bool)>, Vec<TypeDeclaration>) {
-    let mut functions = Vec::with_capacity(200);
-    let mut type_decls = Vec::with_capacity(50);
+    parse_all: bool,
+) -> (
+    SymbolToFunctionInfoMap,
+    SymbolToFunctionInfoMap,
+    HashSet<TypeDeclaration>,
+) {
+    let mut decl_map = HashMap::with_capacity(150);
+    let mut def_map = HashMap::with_capacity(50);
+    let mut type_set = HashSet::with_capacity(100);
     let mut namespace = Vec::new();
-    get_functions_and_types_with_namespace(tu_ast, &mut functions, &mut type_decls, &mut namespace);
-    (functions, type_decls)
+    get_functions_and_types_with_namespace(
+        tu_ast,
+        &mut decl_map,
+        &mut def_map,
+        &mut type_set,
+        &mut namespace,
+        parse_all,
+    );
+    (decl_map, def_map, type_set)
 }
 
 fn get_functions_and_types_with_namespace(
     entity: clang::Entity,
-    functions: &mut Vec<(String, FunctionInfo, bool)>,
-    type_decls: &mut Vec<TypeDeclaration>,
+    decl_map: &mut SymbolToFunctionInfoMap,
+    def_map: &mut SymbolToFunctionInfoMap,
+    type_set: &mut HashSet<TypeDeclaration>,
     namespace: &mut Vec<String>,
+    parse_all: bool,
 ) {
     use clang::EntityKind::*;
+    if let Some(loc) = entity.get_location() {
+        let entity_file_path = loc.get_file_location().file.unwrap().get_path();
+        let relative_path = make_path_relative_from_cwd(
+            entity_file_path
+                .to_str()
+                .expect("File path should always be valid as a &str"),
+        );
+        if !relative_path.starts_with("src/")
+            && !relative_path.starts_with("lib/al")
+            && (!parse_all || !relative_path.starts_with("lib/"))
+        {
+            return;
+        }
+    };
+    let children = entity.get_children();
     match entity.get_kind() {
         Namespace => {
             namespace.push(entity.get_name().clone().unwrap_or_default());
-            for child in entity.get_children() {
-                get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
+            for child in children {
+                get_functions_and_types_with_namespace(
+                    child, decl_map, def_map, type_set, namespace, parse_all,
+                );
             }
             namespace.pop(); // exit namespace
         }
@@ -40,32 +73,39 @@ fn get_functions_and_types_with_namespace(
                     .get_name()
                     .expect("Function entities should always have a valid name field")
             });
-            functions.push((
-                label,
-                FunctionInfo::new(&entity, namespace.clone()),
-                !entity.is_definition(),
-            ));
+            let function = FunctionInfo::new(&entity, namespace.clone());
+            if entity.is_definition() {
+                def_map.insert(label, function);
+            } else {
+                decl_map.insert(label, function);
+            }
         }
         StructDecl | ClassDecl => {
+            // Skip type forward-declarations
+            if children.is_empty() {
+                return;
+            }
             namespace.push(entity.get_name().clone().unwrap_or_default());
-            if !entity.get_children().is_empty() {
-                type_decls.push(TypeDeclaration::new(&entity, namespace.clone()));
-                for child in entity.get_children() {
-                    get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
-                }
+            type_set.insert(TypeDeclaration::new(&entity, namespace.clone()));
+            for child in children {
+                get_functions_and_types_with_namespace(
+                    child, decl_map, def_map, type_set, namespace, parse_all,
+                );
             }
             namespace.pop();
         }
         _ => {
-            for child in entity.get_children() {
-                get_functions_and_types_with_namespace(child, functions, type_decls, namespace);
+            for child in children {
+                get_functions_and_types_with_namespace(
+                    child, decl_map, def_map, type_set, namespace, parse_all,
+                );
             }
         }
     }
 }
 
 fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
-    let mut buf = vec![];
+    let mut files = Vec::with_capacity(1_000);
     let entries = read_dir(path)?;
 
     for entry in entries {
@@ -74,65 +114,96 @@ fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBu
 
         if meta.is_dir() {
             let mut subdir = get_cpp_files_recursive(entry.path())?;
-            buf.append(&mut subdir);
+            files.append(&mut subdir);
         }
 
         if meta.is_file() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "cpp") {
-                buf.push(entry.path());
+                files.push(path);
             }
         }
     }
 
-    Ok(buf)
+    Ok(files)
 }
 
 /// Gets all function declarations (map 1), function definitions (map 2) and type declarations
 /// (hash set) of the project
 pub fn get_project_function_and_types(
-    dirs: &[impl AsRef<Path>],
+    parse_all: bool,
     clang_flags: &[impl AsRef<str>],
     clang_index: &Index,
+    specified_files: Vec<PathBuf>,
 ) -> Result<(
     SymbolToFunctionInfoMap,
     SymbolToFunctionInfoMap,
     HashSet<TypeDeclaration>,
 )> {
-    let mut decl_map: HashMap<String, FunctionInfo> = HashMap::with_capacity(25_000);
-    let mut def_map: HashMap<String, FunctionInfo> = HashMap::with_capacity(10_000);
+    let mut decl_map: SymbolToFunctionInfoMap = HashMap::with_capacity(25_000);
+    let mut def_map: SymbolToFunctionInfoMap = HashMap::with_capacity(10_000);
     let mut type_set: HashSet<TypeDeclaration> = HashSet::with_capacity(500);
 
-    for dir in dirs {
-        for file in get_cpp_files_recursive(dir)? {
-            let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
-            let (functions, types) = find_functions_and_types_in_tu(tu.get_entity());
-            for (mangled_name, function, is_declaration) in functions {
-                if is_declaration {
-                    decl_map.insert(mangled_name, function);
-                } else {
-                    def_map.insert(mangled_name, function);
-                }
-            }
-            type_set.extend(types);
+    let dirs = if parse_all {
+        &["src", "lib"]
+    } else {
+        &["src", "lib/al"]
+    };
+
+    let mut files = Vec::new();
+    let has_specified_files = !specified_files.is_empty();
+
+    if has_specified_files {
+        files = specified_files;
+    } else {
+        for dir in dirs {
+            files.extend(get_cpp_files_recursive(dir)?.into_iter());
         }
     }
+
+    println!("Parsing files and collecting fixes... this can take multiple minutes");
+
+    for file in files {
+        let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
+        let (decls, defs, types) =
+            find_functions_and_types_in_tu(tu.get_entity(), parse_all || has_specified_files);
+        decl_map.extend(decls);
+        def_map.extend(defs);
+        type_set.extend(types);
+    }
+
     Ok((decl_map, def_map, type_set))
 }
 
 pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Result<()> {
-    for (path, changes) in changes_map {
+    for (path, mut changes) in changes_map {
         let mut contents = String::new();
-        let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.clone())?;
         file.read_to_string(&mut contents)?;
 
-        let mut replacements = changes;
         // Sort changes by range start in descending order to avoid different sized replacements
         // from shifting the index of other replacements
-        replacements.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+        changes.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+        let replacements_iter = changes
+            .iter()
+            .enumerate()
+            .filter(|(i, (r, _))| {
+                let Some((prev_r, _)) = changes.get(i - 1) else {
+                    return true;
+                };
+                if r.start == prev_r.start || r.end > prev_r.start {
+                    println!("Warning: Removing overlapping fix for file {}", path);
+                    return false;
+                }
+                true
+            })
+            .map(|(_, c)| c);
 
-        for (range, change) in replacements {
-            contents.replace_range(range, &change);
+        for (range, replacement) in replacements_iter {
+            contents.replace_range(range.clone(), replacement);
         }
 
         file.set_len(0)?;
@@ -144,12 +215,10 @@ pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Res
 }
 
 fn make_path_relative_from_cwd(path: &str) -> String {
-    let mut path_owned = path.to_string();
-    path_owned = path_owned
+    path.to_string()
         .strip_prefix(&format!("{}/", cwd_string()))
-        .unwrap_or(&path_owned)
-        .to_string();
-    path_owned
+        .unwrap_or(path)
+        .to_string()
 }
 
 pub fn change_str_capitalization(input: &str, capitalize: bool) -> String {
@@ -175,14 +244,11 @@ pub fn cwd_string() -> String {
 }
 
 pub fn print_no_visibility_fix_warning() {
-    print_unable_to_fix_warning(
-        "Visibility issues can't be automatically fixed, please fix them manually",
+    println!(
+        "{} {}",
+        "Warning:".bold().red(),
+        "Visibility issues can't be automatically fixed, please fix them manually".red()
     );
-}
-
-// red() requires &strs to be 'static
-pub fn print_unable_to_fix_warning(warning: &'static str) {
-    println!("{} {}", "Warning:".bold().red(), warning.red());
 }
 
 pub fn print_lint_fail_for_location(path: &str, line: u32, warning: &str) {
@@ -206,4 +272,23 @@ pub fn print_possible_compiler_error_warning_for_line(path: &str, line: u32) {
 
 pub fn print_fix_success() {
     println!("{}", "Fixed".b_green());
+}
+
+pub fn repo_has_unstaged_or_untracked() -> std::io::Result<bool> {
+    // check for unstaged changes
+    let diff_status = Command::new("git").args(["diff", "--quiet"]).status()?;
+    if !diff_status.success() {
+        return Ok(true);
+    }
+
+    // check for untracked files
+    let untracked = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .output()?;
+    Ok(!untracked.stdout.is_empty())
+}
+
+// red() requires &strs to be 'static
+pub fn print_unable_to_fix_warning(warning: &'static str) {
+    println!("{} {}", "Warning:".bold().red(), warning.red());
 }

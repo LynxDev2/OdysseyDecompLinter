@@ -133,7 +133,7 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
     let incorrect_accessibility_decls: Vec<_> = state
         .declarations
         .values()
-        .filter(|d| d.name.ends_with("_") && d.accessibility != Accessibility::Private)
+        .filter(|d| !d.is_ctor_or_dtor && d.name.ends_with("_") && d.accessibility != Accessibility::Private)
         .collect();
     for decl in incorrect_accessibility_decls {
         utils::print_lint_fail_for_location(
@@ -155,15 +155,16 @@ fn override_base_param_names_match(state: &mut LinterSharedState) {
         if declaration.overriden_method.is_empty() || declaration.is_ctor_or_dtor {
             continue;
         }
-        let base_method: FunctionInfo = state
+        let Some(base_method) = state
             .declarations
             .get(&declaration.overriden_method)
             // Header-implemented virtual functions only appear in the definitions map
             .or_else(|| state.definitions.get(&declaration.overriden_method))
             .cloned()
-            .expect(
-                "Functions that override other functions should always have a valid base function",
-            );
+        else {
+            // Base functions from libraries migth not be parsed
+            continue;
+        };
         compare_params(
             &base_method,
             state.declarations.get_mut(symbol).unwrap(),
@@ -268,6 +269,7 @@ fn compare_params(
             // Update the param name in the shared state so that other lints know about the
             // new value
             target_param.name = replace_with;
+            utils::print_fix_success();
         }
     }
 }
@@ -294,11 +296,18 @@ fn declaration_overriding_keyword(state: &mut LinterSharedState) {
     for decl in state
         .declarations
         .values()
+        .chain(state.definitions.values().filter(|d| d.file_path.ends_with(".h")))
         .filter(|d| !d.overriden_method.is_empty())
     {
         let Some(virtual_token) = decl.tokens.iter().find(|t| t.spelling == "virtual") else {
             continue;
         };
+
+        // Some pure-virtuals get marked as overriding themselves
+        if decl.tokens.windows(2).any(|two_tokens| two_tokens[0].spelling == "=" && two_tokens[1].spelling == "0") {
+            continue;
+        }
+
         utils::print_lint_fail_for_location(
             &decl.file_path,
             virtual_token.file_line,
@@ -538,8 +547,8 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     continue;
                 }
 
-                if field_name_bytes[0].is_ascii_uppercase()
-                    || (field.name.starts_with("m") && field_name_bytes[1].is_ascii_uppercase())
+                if field_name_bytes.len() > 1 && (field_name_bytes[0].is_ascii_uppercase()
+                    || (field.name.starts_with("m") && field_name_bytes[1].is_ascii_uppercase()))
                 {
                     print_fail_for_field_and_add_fix(
                         "Member variables of structs should be formatted as noPrefixCamelCase",
