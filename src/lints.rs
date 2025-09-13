@@ -18,7 +18,9 @@ fn underscore_suffixed_functions_private(state: &LinterSharedState) {
     let incorrect_accessibility_decls: Vec<_> = state
         .declarations
         .values()
-        .filter(|d| d.name.ends_with("_") && d.accessibility != Accessibility::Private)
+        .filter(|d| {
+            !d.is_ctor_or_dtor && d.name.ends_with("_") && d.accessibility != Accessibility::Private
+        })
         .collect();
     for decl in incorrect_accessibility_decls {
         utils::print_lint_fail_for_location(

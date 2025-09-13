@@ -66,6 +66,7 @@ pub struct FunctionInfo {
     pub accessibility: Accessibility,
     pub tokens: Vec<SimpleToken>,
     pub namespace: Vec<String>,
+    pub is_ctor_or_dtor: bool,
 }
 
 impl FunctionInfo {
@@ -131,6 +132,7 @@ impl FunctionInfo {
             accessibility,
             tokens,
             namespace,
+            is_ctor_or_dtor: matches!(function_entity.get_kind(), Constructor | Destructor),
         }
     }
 }
