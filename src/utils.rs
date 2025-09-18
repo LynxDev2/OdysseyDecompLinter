@@ -1,12 +1,12 @@
 use crate::types::{FilePathToChangesMap, FunctionInfo, SymbolToFunctionInfoMap, TypeDeclaration};
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use clang::Index;
 use colorize::AnsiColor;
 use std::{
     collections::{HashMap, HashSet},
-    fs::{read_dir, OpenOptions},
+    fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
 };
 
@@ -104,35 +104,11 @@ fn get_functions_and_types_with_namespace(
     }
 }
 
-fn get_cpp_files_recursive(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
-    let mut files = Vec::with_capacity(1_000);
-    let entries = read_dir(path)?;
-
-    for entry in entries {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-
-        if meta.is_dir() {
-            let mut subdir = get_cpp_files_recursive(entry.path())?;
-            files.append(&mut subdir);
-        }
-
-        if meta.is_file() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "cpp") {
-                files.push(path);
-            }
-        }
-    }
-
-    Ok(files)
-}
-
 /// Gets all function declarations (map 1), function definitions (map 2) and type declarations
 /// (hash set) of the project
 pub fn get_project_function_and_types(
     parse_all: bool,
-    clang_flags: &[impl AsRef<str>],
+    compilation_db: clang::CompilationDatabase,
     clang_index: &Index,
     specified_files: Vec<PathBuf>,
 ) -> Result<(
@@ -150,23 +126,58 @@ pub fn get_project_function_and_types(
         &["src", "lib/al"]
     };
 
-    let mut files = Vec::new();
-    let has_specified_files = !specified_files.is_empty();
-
-    if has_specified_files {
-        files = specified_files;
-    } else {
-        for dir in dirs {
-            files.extend(get_cpp_files_recursive(dir)?.into_iter());
-        }
-    }
-
     println!("Parsing files and collecting fixes... this can take multiple minutes");
 
-    for file in files {
-        let tu = clang_index.parser(&file).arguments(clang_flags).parse()?;
-        let (decls, defs, types) =
-            find_functions_and_types_in_tu(tu.get_entity(), parse_all || has_specified_files);
+    // These need to be in this scope since the lifetime of a CompileCommand object is tied to the
+    // parent CompileCommands object with a marker
+    let all_compile_commands = compilation_db.get_all_compile_commands();
+    let specific_compile_commands: Box<_> = specified_files.iter().filter_map(|f| {
+        let cmds = compilation_db.get_compile_commands(f);
+        if cmds.is_err() {
+            println!("Warning: No compile commands found for file {f:?} (maybe rerun build.py first?)");
+        }
+        cmds.ok()
+    }).collect();
+
+    let compile_commands: Box<[clang::CompileCommand]> = if specified_files.is_empty() {
+        all_compile_commands
+            .get_commands()
+            .into_iter()
+            .filter(|c| {
+                let relative_path = make_path_relative_from_cwd(
+                    c.get_filename()
+                        .to_str()
+                        .expect("Source file paths should always be valid as strs"),
+                );
+                dirs.iter().any(|d| relative_path.starts_with(d))
+            })
+            .collect()
+    } else {
+        specific_compile_commands
+            .iter()
+            .map(|cmds| cmds.get_commands()[0])
+            .collect()
+    };
+
+    for command in compile_commands.iter() {
+        ensure!(
+            command.get_directory() == std::env::current_dir()?.join("build"),
+            "File {:?} was not built in the current working directory",
+            command.get_filename()
+        );
+        let clang_flags: Box<_> = command
+            .get_arguments()
+            .into_iter()
+            .filter(|f| f != "-c" && f != "-o" && (f.starts_with("-") || f.ends_with("include")))
+            .collect();
+        let tu = clang_index
+            .parser(command.get_filename())
+            .arguments(&clang_flags)
+            .parse()?;
+        let (decls, defs, types) = find_functions_and_types_in_tu(
+            tu.get_entity(),
+            parse_all || !specified_files.is_empty(),
+        );
         decl_map.extend(decls);
         def_map.extend(defs);
         type_set.extend(types);
