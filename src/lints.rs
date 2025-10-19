@@ -256,8 +256,8 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     );
                     continue;
                 }
-                // Offset is None when the parent type contains field(s) that have a type from a
-                // generic parameter
+                // Offset is None when a template of the parent type affects its size in memory
+                // (it contains field(s) that have a type from a generic parameter)
                 if let Some(actual_offset) = field.offset_in_type {
                     if offset != format!("{actual_offset:x}") {
                         print_fail_for_field_and_add_fix(&format!(

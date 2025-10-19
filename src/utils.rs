@@ -1,6 +1,6 @@
 use crate::types::{FilePathToChangesMap, FunctionInfo, SymbolToFunctionInfoMap, TypeDeclaration};
 use anyhow::{ensure, Result};
-use clang::Index;
+use clang::{diagnostic::Severity, Index};
 use colorize::AnsiColor;
 use std::{
     collections::{HashMap, HashSet},
@@ -165,15 +165,22 @@ pub fn get_project_function_and_types(
             "File {:?} was not built in the current working directory",
             command.get_filename()
         );
-        let clang_flags: Box<_> = command
-            .get_arguments()
-            .into_iter()
-            .filter(|f| f != "-c" && f != "-o" && (f.starts_with("-") || f.ends_with("include")))
+        let command_args = command.get_arguments();
+        let clang_flags: Box<_> = command_args
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(i, f)| {
+                !matches!(f.as_str(), "-c" | "-o")
+                    && !matches!(command_args[i - 1].as_str(), "-c" | "-o")
+            })
+            .map(|(_, f)| f)
             .collect();
         let tu = clang_index
             .parser(command.get_filename())
             .arguments(&clang_flags)
             .parse()?;
+        handle_tu_diagnostics(&tu.get_diagnostics());
         let (decls, defs, types) = find_functions_and_types_in_tu(
             tu.get_entity(),
             parse_all || !specified_files.is_empty(),
@@ -184,6 +191,22 @@ pub fn get_project_function_and_types(
     }
 
     Ok((decl_map, def_map, type_set))
+}
+
+fn handle_tu_diagnostics(diagnostics: &[clang::diagnostic::Diagnostic]) {
+    for diag in diagnostics.iter().filter(|d| {
+        // arm_neon.h uses compiler builtins that aren't found unless the correct version of clang is used
+        matches!(d.get_severity(), Severity::Error | Severity::Fatal)
+            && !d
+                .get_location()
+                .get_file_location()
+                .file
+                .expect("Diagnostics should always have a valid file path")
+                .get_path()
+                .ends_with("arm_neon.h")
+    }) {
+        println!("{diag}");
+    }
 }
 
 pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Result<()> {
