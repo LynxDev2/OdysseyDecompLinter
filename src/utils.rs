@@ -194,17 +194,10 @@ pub fn get_project_function_and_types(
 }
 
 fn handle_tu_diagnostics(diagnostics: &[clang::diagnostic::Diagnostic]) {
-    for diag in diagnostics.iter().filter(|d| {
-        // arm_neon.h uses compiler builtins that aren't found unless the correct version of clang is used
-        matches!(d.get_severity(), Severity::Error | Severity::Fatal)
-            && !d
-                .get_location()
-                .get_file_location()
-                .file
-                .expect("Diagnostics should always have a valid file path")
-                .get_path()
-                .ends_with("arm_neon.h")
-    }) {
+    for diag in diagnostics
+        .iter()
+        .filter(|d| matches!(d.get_severity(), Severity::Error | Severity::Fatal))
+    {
         println!("{diag}");
     }
 }
