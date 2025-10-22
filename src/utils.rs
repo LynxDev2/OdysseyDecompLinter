@@ -56,6 +56,15 @@ fn get_functions_and_types_with_namespace(
             return;
         }
     };
+
+    if entity
+        .get_comment()
+        .unwrap_or_default()
+        .contains("decomp-linter: skip")
+    {
+        return;
+    }
+
     let children = entity.get_children();
     match entity.get_kind() {
         Namespace => {
