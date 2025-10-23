@@ -74,9 +74,9 @@ impl FunctionInfo {
         assert!(
             matches!(
                 function_entity.get_kind(),
-                FunctionDecl | Method | Constructor | Destructor
+                FunctionDecl | Method | Constructor | Destructor | ConversionFunction | FunctionTemplate
             ),
-            "Function entity should be of type FunctionDecl, Method, Constructor or Destructor"
+            "Function entity should be of type FunctionDecl, Method, Constructor, Destructor, ConversionFunction or FunctionTemplate"
         );
         let loc = function_entity
             .get_location()
@@ -103,6 +103,7 @@ impl FunctionInfo {
             .expect("Function entites should always have a valid source range");
         let accessibility = function_entity
             .get_accessibility()
+            // TODO: better logic to capture default on namespace and cpp-only functions
             .unwrap_or(Accessibility::Private);
         let tokens: Vec<_> = range.tokenize().iter().map(SimpleToken::new).collect();
         let lexical_parent_name = function_entity
@@ -169,8 +170,8 @@ pub struct TypeDeclaration {
 impl TypeDeclaration {
     pub fn new(type_decl_entity: &clang::Entity, namespace: Vec<String>) -> TypeDeclaration {
         assert!(
-            matches!(type_decl_entity.get_kind(), StructDecl | ClassDecl),
-            "Type declaration entity should be of type StructDecl or ClassDecl"
+            matches!(type_decl_entity.get_kind(), StructDecl | ClassDecl | ClassTemplate | ClassTemplatePartialSpecialization),
+            "Type declaration entity should be of type StructDecl, ClassDecl, ClassTemplate or ClassTemplatePartialSpecialization"
         );
         let name = type_decl_entity
             .get_name()

@@ -133,13 +133,14 @@ fn check_namespace_usages(
     {
         // Allow usage of class name when making function pointers (&A::B) and in function pointer
         // types (A::*)
-        if (tokens
-            .get(original_i.wrapping_sub(1))
-            .is_some_and(|t| t.spelling == "&")
-            || tokens
-                .get(original_i + 2)
-                .is_some_and(|t| t.spelling == "*"))
-            && ident_token.spelling == *namespace.last().unwrap()
+        if ident_token.spelling == *namespace.last().unwrap()
+            && (original_i
+                .checked_sub(1)
+                .map(|i| &tokens[i])
+                .is_some_and(|t| t.spelling == "&")
+                || tokens
+                    .get(original_i + 2)
+                    .is_some_and(|t| t.spelling == "*"))
         {
             continue;
         }
@@ -265,6 +266,12 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                             field.name
                         ), format!("{prefix}{actual_offset:x}"));
                     }
+                } else {
+                    utils::print_lint_fail_for_location(
+                        &type_decl.file_path,
+                        field.location.line,
+                        "Unable to calculate offset for field, which likely means it is part of a templated type and its offset should not be assumed",
+                    );
                 }
                 continue;
             }
@@ -285,26 +292,29 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
             let field_name_bytes = field.name.as_bytes();
 
             if type_decl.is_struct {
-                // Skip macro-generated Nerve structs
+                // SMO: Skip macro-generated Nerve structs
                 if type_decl.name.starts_with("Nrv")
                     || type_decl.name.starts_with("(unnamed struct")
                 {
                     continue;
                 }
 
-                if field_name_bytes.len() > 1
-                    && (field_name_bytes[0].is_ascii_uppercase()
-                        || (field.name.starts_with("m")
-                            && field_name_bytes[1].is_ascii_uppercase()))
+                if field_name_bytes[0].is_ascii_uppercase()
+                    || (field.name.starts_with("m")
+                        && field_name_bytes
+                            .get(1)
+                            .is_some_and(|c| c.is_ascii_uppercase()))
                 {
                     print_fail_for_field_and_add_fix(
                         "Member variables of structs should be formatted as noPrefixCamelCase",
                         field_name_no_m_prefix_decapitalized.clone(),
                     );
+                    continue;
                 }
             } else if !field.name.starts_with("m")
-                || field_name_bytes.len() < 2
-                || !field_name_bytes[1].is_ascii_uppercase()
+                || field_name_bytes
+                    .get(1)
+                    .is_none_or(|c| c.is_ascii_lowercase())
             {
                 print_fail_for_field_and_add_fix(
                     "Member variables of classes should be prefixed with `m`",

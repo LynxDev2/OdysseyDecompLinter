@@ -67,7 +67,8 @@ fn get_functions_and_types_with_namespace(
             }
             namespace.pop(); // exit namespace
         }
-        FunctionDecl | Method | Constructor | Destructor => {
+        FunctionDecl | Method | Constructor | Destructor | ConversionFunction
+        | FunctionTemplate => {
             let label = entity.get_mangled_name().unwrap_or_else(|| {
                 entity
                     .get_name()
@@ -80,7 +81,7 @@ fn get_functions_and_types_with_namespace(
                 decl_map.insert(label, function);
             }
         }
-        StructDecl | ClassDecl => {
+        StructDecl | ClassDecl | ClassTemplate | ClassTemplatePartialSpecialization => {
             // Skip type forward-declarations
             if children.is_empty() {
                 return;
