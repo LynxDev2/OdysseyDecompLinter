@@ -146,25 +146,24 @@ fn check_namespace_usages(
         }
 
         // Allow the "A::" abd "B::" in "A::B::c() {}"
-        let Some(opening_parent_index) = tokens.iter().position(|t| t.spelling == "(") else {
-            continue;
+        if let Some(opening_parent_index) = tokens.iter().position(|t| t.spelling == "(") {
+            if opening_parent_index >= 3 {
+                let mut j = opening_parent_index - 3;
+                if (tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator") && j > 0
+                {
+                    j -= 1
+                }
+                while tokens[j + 1].spelling == "::" {
+                    if tokens[j].spelling == ident_token.spelling {
+                        continue 'tokens;
+                    }
+                    if j < 2 {
+                        break;
+                    }
+                    j -= 2;
+                }
+            }
         };
-        if opening_parent_index < 3 {
-            continue;
-        }
-        let mut j = opening_parent_index - 3;
-        if (tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator") && j > 0 {
-            j -= 1
-        }
-        while tokens[j + 1].spelling == "::" {
-            if tokens[j].spelling == ident_token.spelling {
-                continue 'tokens;
-            }
-            if j < 2 {
-                break;
-            }
-            j -= 2;
-        }
 
         // Check whether or not the current token is a usage of a namespace the code currently being
         // checked is inside of
