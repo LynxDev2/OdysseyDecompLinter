@@ -214,7 +214,7 @@ pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Res
 
         // Sort changes by range start in descending order to avoid different sized replacements
         // from shifting the index of other replacements
-        changes.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+        changes.sort_by_key(|b| std::cmp::Reverse(b.0.start));
         let replacements_iter = changes
             .iter()
             .enumerate()

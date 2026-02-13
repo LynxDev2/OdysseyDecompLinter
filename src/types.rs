@@ -193,9 +193,16 @@ impl TypeDeclaration {
             .filter(|c| c.get_kind() == FieldDecl)
             .map(TypeField::new)
             .collect();
+        let is_templated_struct = matches!(
+            type_decl_entity.get_kind(),
+            ClassTemplate | ClassTemplatePartialSpecialization
+        ) && type_decl_entity
+            .get_template_kind()
+            .expect("Template entites should always have a template kind")
+            == StructDecl;
         TypeDeclaration {
             name,
-            is_struct: type_decl_entity.get_kind() == StructDecl,
+            is_struct: type_decl_entity.get_kind() == StructDecl || is_templated_struct,
             file_path,
             fields,
             namespace,

@@ -134,9 +134,12 @@ fn check_namespace_usages(
         // Allow usage of class name when making function pointers (&A::B) and in function pointer
         // types (A::*)
         if ident_token.spelling == *namespace.last().unwrap()
+            && tokens
+                .get(original_i + 1)
+                .is_some_and(|t| t.spelling == "::")
             && (original_i
                 .checked_sub(1)
-                .map(|i| &tokens[i])
+                .and_then(|i| tokens.get(i))
                 .is_some_and(|t| t.spelling == "&")
                 || tokens
                     .get(original_i + 2)
@@ -146,7 +149,14 @@ fn check_namespace_usages(
         }
 
         // Allow the "A::" abd "B::" in "A::B::c() {}"
-        if let Some(opening_parent_index) = tokens.iter().position(|t| t.spelling == "(") {
+        if let Some(opening_parent_index) =
+            tokens.iter().position(|t| t.spelling == "(").and_then(|i| {
+                tokens[..i]
+                    .iter()
+                    .rposition(|t| t.spelling == "<")
+                    .or(Some(i))
+            })
+        {
             if opening_parent_index >= 3 {
                 let mut j = opening_parent_index - 3;
                 if (tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator") && j > 0
@@ -198,6 +208,7 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
         ["pad_", "padding_", "field_", "unk_", "gap_", "filler_", "_"];
     const MISC_ALLOWED_PREFIXES: [&str; 5] = ["pad", "unk", "gap", "filler", "unused"];
     const BOOL_ALLOWED_PREFIXES: [&str; 5] = ["is", "has", "should", "always", "value"];
+    const BOOL_DEFAULT_PREFIX: &str = BOOL_ALLOWED_PREFIXES[0];
     for type_decl in &state.types {
         for field in &type_decl.fields {
             // Field specific utility closures
@@ -293,12 +304,15 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
             if type_decl.is_struct {
                 // SMO: Skip macro-generated Nerve structs
                 if type_decl.name.starts_with("Nrv")
-                    || type_decl.name.starts_with("(unnamed struct")
+                    || (type_decl.name.starts_with("(unnamed struct")
+                        && type_decl.fields.iter().any(|f| f.type_name.contains("Nrv")))
                 {
                     continue;
                 }
 
-                if field_name_bytes[0].is_ascii_uppercase()
+                if field_name_bytes
+                    .first()
+                    .is_some_and(|c| c.is_ascii_uppercase())
                     || (field.name.starts_with("m")
                         && field_name_bytes
                             .get(1)
@@ -326,10 +340,18 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                     .iter()
                     .any(|p| field_name_no_m_prefix_decapitalized.starts_with(p))
             {
+                let struct_field_name_fix = format!(
+                    "{}{}",
+                    BOOL_DEFAULT_PREFIX,
+                    utils::change_str_capitalization(field_name_no_m_prefix, true)
+                );
                 let field_name_fix = if type_decl.is_struct {
-                    format!("is{}", utils::change_str_capitalization(&field.name, true))
+                    struct_field_name_fix
                 } else {
-                    format!("mIs{}", &field.name[1..])
+                    format!(
+                        "m{}",
+                        utils::change_str_capitalization(&struct_field_name_fix, true)
+                    )
                 };
                 print_fail_for_field_and_add_fix("Boolean member variables should be prefixed with (`m`) `is`, `has`, `should`, or `always`", field_name_fix);
             }
