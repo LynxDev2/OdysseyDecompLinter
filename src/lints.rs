@@ -305,7 +305,11 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 // SMO: Skip macro-generated Nerve structs
                 if type_decl.name.starts_with("Nrv")
                     || (type_decl.name.starts_with("(unnamed struct")
-                        && type_decl.fields.iter().any(|f| f.type_name.contains("Nrv")))
+                        && type_decl.fields.iter().any(|f| {
+                            f.type_name.contains("Nrv") 
+                        // For nested nerve structs
+                        || f.name.contains("Nrv")
+                        }))
                 {
                     continue;
                 }

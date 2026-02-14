@@ -111,6 +111,7 @@ impl FunctionInfo {
             .expect("Function entities should always have a lexical parent")
             .get_name()
             .unwrap_or_default();
+        let mut inline_namespace = Vec::new();
         let mut semantic_parent = function_entity.get_semantic_parent();
         // Add any semantic parents that aren't lexical parents (like "A" and "B" in "A::B::C() {}" to the namespace)
         while let Some(parent) = semantic_parent {
@@ -122,9 +123,10 @@ impl FunctionInfo {
                 // all "outer ones" should be listed in namespace already
                 break;
             }
-            namespace.push(name);
+            inline_namespace.push(name);
             semantic_parent = parent.get_semantic_parent();
         }
+        namespace.extend(inline_namespace.into_iter().rev());
         FunctionInfo {
             name,
             file_path,
