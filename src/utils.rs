@@ -166,7 +166,13 @@ pub fn get_project_function_and_types(
             "File {:?} was not built in the current working directory",
             command.get_filename()
         );
-        let command_args = command.get_arguments();
+        let command_args: Box<[_]> = command
+            .get_arguments()
+            .into_iter()
+            // This fix is needed when getting individual compile commands
+            .filter(|f| *f != "--" && *f != command.get_filename().to_str().unwrap_or_default())
+            .collect();
+
         let clang_flags: Box<_> = command_args
             .iter()
             .enumerate()
@@ -219,9 +225,10 @@ pub fn write_changes_to_files(changes_map: FilePathToChangesMap) -> std::io::Res
             .iter()
             .enumerate()
             .filter(|(i, (r, _))| {
-                let Some((prev_r, _)) = changes.get(i - 1) else {
+                if *i == 0 {
                     return true;
-                };
+                }
+                let (prev_r, _) = &changes[i - 1];
                 if r.start == prev_r.start || r.end > prev_r.start {
                     println!("Warning: Removing overlapping fix for file {}", path);
                     return false;
@@ -282,7 +289,7 @@ pub fn print_no_visibility_fix_warning() {
 pub fn print_lint_fail_for_location(path: &str, line: u32, warning: &str) {
     println!(
         "{}",
-        &format!("{}:{line}: {warning}", make_path_relative_from_cwd(path)).b_yellow()
+        format!("{}:{line}: {warning}", make_path_relative_from_cwd(path)).b_yellow()
     );
 }
 
@@ -290,7 +297,7 @@ pub fn print_possible_compiler_error_warning_for_line(path: &str, line: u32) {
     println!(
         "{} {}",
         "Warning:".bold().b_red(),
-        &format!(
+        format!(
             "{}:{line}: Field name changed, this may cause errors when compiling",
             make_path_relative_from_cwd(path)
         )

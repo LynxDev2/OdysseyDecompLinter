@@ -100,6 +100,7 @@ fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
             &f.file_path,
             &mut state.fixes,
             state.auto_fix,
+            f.params_paren_offset.unwrap_or_default(),
         );
     }
 
@@ -111,6 +112,7 @@ fn no_unnecessary_namespace_usages(state: &mut LinterSharedState) {
                 &t.file_path,
                 &mut state.fixes,
                 state.auto_fix,
+                0,
             );
         }
     }
@@ -122,13 +124,15 @@ fn check_namespace_usages(
     file_path: &str,
     changes_map: &mut FilePathToChangesMap,
     auto_fix: bool,
+    first_token_offset: usize,
 ) {
     if namespace.is_empty() {
         return;
     }
-    'tokens: for (original_i, ident_token) in tokens
+    for (original_i, ident_token) in tokens
         .iter()
         .enumerate()
+        .filter(|(_, t)| t.location.offset >= first_token_offset)
         .filter(|(_, t)| t.kind == TokenKind::Identifier)
     {
         // Allow usage of class name when making function pointers (&A::B) and in function pointer
@@ -147,33 +151,6 @@ fn check_namespace_usages(
         {
             continue;
         }
-
-        // Allow the "A::" abd "B::" in "A::B::c() {}"
-        if let Some(opening_parent_index) =
-            tokens.iter().position(|t| t.spelling == "(").and_then(|i| {
-                tokens[..i]
-                    .iter()
-                    .rposition(|t| t.spelling == "<")
-                    .or(Some(i))
-            })
-        {
-            if opening_parent_index >= 3 {
-                let mut j = opening_parent_index - 3;
-                if (tokens[j + 1].spelling == "~" || tokens[j + 1].spelling == "operator") && j > 0
-                {
-                    j -= 1
-                }
-                while tokens[j + 1].spelling == "::" {
-                    if tokens[j].spelling == ident_token.spelling {
-                        continue 'tokens;
-                    }
-                    if j < 2 {
-                        break;
-                    }
-                    j -= 2;
-                }
-            }
-        };
 
         // Check whether or not the current token is a usage of a namespace the code currently being
         // checked is inside of
@@ -306,9 +283,9 @@ fn type_declaration_field_naming(state: &mut LinterSharedState) {
                 if type_decl.name.starts_with("Nrv")
                     || (type_decl.name.starts_with("(unnamed struct")
                         && type_decl.fields.iter().any(|f| {
-                            f.type_name.contains("Nrv") 
-                        // For nested nerve structs
-                        || f.name.contains("Nrv")
+                            f.type_name.contains("Nrv") ||
+                            // For nested nerve structs
+                            f.name.contains("Nrv")
                         }))
                 {
                     continue;

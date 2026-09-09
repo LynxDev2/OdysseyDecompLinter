@@ -67,6 +67,7 @@ pub struct FunctionInfo {
     pub tokens: Vec<SimpleToken>,
     pub namespace: Vec<String>,
     pub is_ctor_or_dtor: bool,
+    pub params_paren_offset: Option<usize>,
 }
 
 impl FunctionInfo {
@@ -127,6 +128,22 @@ impl FunctionInfo {
             semantic_parent = parent.get_semantic_parent();
         }
         namespace.extend(inline_namespace.into_iter().rev());
+        // Get the offset of the paren starting the parameter list. This stored so that the
+        // namespace lint can skip checking the namespaces of return types
+        let params_paren_offset = function_entity
+            .get_name_ranges()
+            .last()
+            .map(|r| r.get_end().get_file_location().offset as usize)
+            .and_then(|name_end_offset| {
+                tokens
+                    .iter()
+                    .find(|t| {
+                        t.kind == TokenKind::Punctuation
+                            && t.spelling == "("
+                            && t.location.offset >= name_end_offset
+                    })
+                    .map(|t| t.location.offset)
+            });
         FunctionInfo {
             name,
             file_path,
@@ -136,6 +153,7 @@ impl FunctionInfo {
             tokens,
             namespace,
             is_ctor_or_dtor: matches!(function_entity.get_kind(), Constructor | Destructor),
+            params_paren_offset,
         }
     }
 }
